@@ -1,0 +1,25 @@
+[package]
+name = "qibt_rust"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+netcdf = "0.11"
+ndarray = { version = "0.15", features = ["rayon", "blas"] }
+rayon = "1.7"
+chrono = "0.4"
+clap = "4"
+num-traits = "0.2"
+thiserror = "1.0"
+rand = "0.9.2"
+crossbeam-channel = "0.5"
+flamegraph = { version = "0.6", optional = true }
+
+# Optional benchmarking dependencies
+[dev-dependencies]
+criterion = "0.5"
+
+[features]
+default = []
+optimized = ["flamegraph"]
+f32_precision = []
