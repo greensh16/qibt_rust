@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use crate::config::Config;
+use crate::io::{DataReader, DataReaderError, VariableInfo, DimensionInfo, FileMetadata, Attributes, AttributeValue};
 
 /// Common interface for data loaders to guarantee identical external behavior
 pub trait DataLoader {
@@ -158,9 +159,9 @@ impl NetCDFReader {
     }
 
     /// Get file metadata
-    pub fn get_metadata(&self) -> Result<FileMetadata, String> {
+    pub fn get_metadata(&self) -> Result<NetCDFFileMetadata, String> {
         // TODO: Implement metadata reading
-        Ok(FileMetadata {
+        Ok(NetCDFFileMetadata {
             dimensions: vec![
                 "time".to_string(),
                 "level".to_string(),
@@ -177,9 +178,9 @@ impl NetCDFReader {
     }
 }
 
-/// File metadata structure
+/// NetCDF-specific file metadata structure
 #[derive(Debug)]
-pub struct FileMetadata {
+pub struct NetCDFFileMetadata {
     pub dimensions: Vec<String>,
     pub variables: Vec<String>,
     pub global_attributes: std::collections::HashMap<String, String>,
@@ -575,7 +576,7 @@ impl MultiFileDataLoader {
         let mut current_time = start_date;
         while current_time <= end_date {
             times.push(current_time);
-            current_time = current_time + step_duration;
+            current_time += step_duration;
         }
         
         times
@@ -770,5 +771,202 @@ impl SimulationDataset {
             }
         }
         None
+    }
+}
+
+/// Implementation of DataReader trait for NetCDFReader
+impl DataReader for NetCDFReader {
+    fn open(&mut self, path: &Path) -> Result<(), DataReaderError> {
+        self.file_path = path.to_string_lossy().to_string();
+        // Validate the file exists
+        self.validate_file().map_err(|e| DataReaderError::FileNotFound(e))?;
+        Ok(())
+    }
+    
+    fn is_open(&self) -> bool {
+        Path::new(&self.file_path).exists()
+    }
+    
+    fn close(&mut self) {
+        // NetCDF files are stateless in this implementation
+    }
+    
+    fn list_variables(&self) -> Result<Vec<String>, DataReaderError> {
+        // Return standard meteorological variables
+        Ok(vec![
+            "U".to_string(),
+            "V".to_string(), 
+            "W".to_string(),
+            "T".to_string(),
+            "QVAPOR".to_string(),
+            "P".to_string(),
+            "PB".to_string(),
+        ])
+    }
+    
+    fn get_variable_info(&self, variable_name: &str) -> Result<VariableInfo, DataReaderError> {
+        let info = VariableInfo {
+            name: variable_name.to_string(),
+            dimensions: vec!["time".to_string(), "level".to_string(), "lat".to_string(), "lon".to_string()],
+            shape: vec![1, 10, 50, 50], // Placeholder dimensions
+            dtype: "f32".to_string(),
+            units: match variable_name {
+                "U" | "V" | "W" => Some("m/s".to_string()),
+                "T" => Some("K".to_string()),
+                "QVAPOR" => Some("kg/kg".to_string()),
+                "P" | "PB" => Some("Pa".to_string()),
+                _ => None,
+            },
+            long_name: match variable_name {
+                "U" => Some("U-component of wind".to_string()),
+                "V" => Some("V-component of wind".to_string()),
+                "W" => Some("Vertical velocity".to_string()),
+                "T" => Some("Temperature".to_string()),
+                "QVAPOR" => Some("Water vapor mixing ratio".to_string()),
+                "P" => Some("Perturbation pressure".to_string()),
+                "PB" => Some("Base state pressure".to_string()),
+                _ => None,
+            },
+        };
+        Ok(info)
+    }
+    
+    fn list_dimensions(&self) -> Result<Vec<String>, DataReaderError> {
+        Ok(vec![
+            "time".to_string(),
+            "level".to_string(),
+            "lat".to_string(),
+            "lon".to_string(),
+        ])
+    }
+    
+    fn get_dimension_info(&self, dimension_name: &str) -> Result<DimensionInfo, DataReaderError> {
+        let info = DimensionInfo {
+            name: dimension_name.to_string(),
+            size: match dimension_name {
+                "time" => 1,
+                "level" => 10,
+                "lat" => 50,
+                "lon" => 50,
+                _ => return Err(DataReaderError::MissingDimension(dimension_name.to_string())),
+            },
+            is_unlimited: dimension_name == "time",
+        };
+        Ok(info)
+    }
+    
+    fn get_metadata(&self) -> Result<crate::io::FileMetadata, DataReaderError> {
+        let dimensions = vec![
+            DimensionInfo { name: "time".to_string(), size: 1, is_unlimited: true },
+            DimensionInfo { name: "level".to_string(), size: 10, is_unlimited: false },
+            DimensionInfo { name: "lat".to_string(), size: 50, is_unlimited: false },
+            DimensionInfo { name: "lon".to_string(), size: 50, is_unlimited: false },
+        ];
+        
+        let variables = self.list_variables()?
+            .into_iter()
+            .map(|name| self.get_variable_info(&name))
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        let global_attributes = Attributes::new();
+        
+        Ok(crate::io::FileMetadata {
+            dimensions,
+            variables,
+            global_attributes,
+        })
+    }
+    
+    fn read_variable(&self, variable_name: &str) -> Result<Array4<f32>, DataReaderError> {
+        // Create placeholder data with appropriate shape [j, i, k, t]
+        let shape = (50, 50, 10, 1); // (lat, lon, level, time)
+        let data = Array4::<f32>::zeros(shape);
+        
+        println!("NetCDF reader: reading variable {} with shape {:?}", variable_name, shape);
+        Ok(data)
+    }
+    
+    fn read_variable_slice(
+        &self,
+        variable_name: &str,
+        _indices: &[(usize, usize, usize)]
+    ) -> Result<Array4<f32>, DataReaderError> {
+        // For simplicity, just return the full variable
+        self.read_variable(variable_name)
+    }
+    
+    fn read_variables(&self, variable_names: &[&str]) -> Result<HashMap<String, Array4<f32>>, DataReaderError> {
+        let mut result = HashMap::new();
+        
+        for &name in variable_names {
+            let data = self.read_variable(name)?;
+            result.insert(name.to_string(), data);
+        }
+        
+        Ok(result)
+    }
+    
+    fn read_coordinates(&self) -> Result<(Array2<f32>, Array2<f32>, Array1<f32>), DataReaderError> {
+        // Create placeholder coordinate arrays
+        let lat_grid = Array2::<f32>::zeros((50, 50));
+        let lon_grid = Array2::<f32>::zeros((50, 50));
+        let levels = Array1::<f32>::from(vec![1000.0, 900.0, 800.0, 700.0, 600.0, 500.0, 400.0, 300.0, 200.0, 100.0]);
+        
+        Ok((lat_grid, lon_grid, levels))
+    }
+    
+    fn get_global_attributes(&self) -> Result<Attributes, DataReaderError> {
+        let mut attrs = Attributes::new();
+        attrs.insert("title".to_string(), AttributeValue::String("NetCDF Test Data".to_string()));
+        attrs.insert("source".to_string(), AttributeValue::String("QIBT Rust".to_string()));
+        Ok(attrs)
+    }
+    
+    fn get_variable_attributes(&self, variable_name: &str) -> Result<Attributes, DataReaderError> {
+        let mut attrs = Attributes::new();
+        
+        match variable_name {
+            "U" | "V" | "W" => {
+                attrs.insert("units".to_string(), AttributeValue::String("m/s".to_string()));
+                attrs.insert("_FillValue".to_string(), AttributeValue::Float(-9999.0));
+            },
+            "T" => {
+                attrs.insert("units".to_string(), AttributeValue::String("K".to_string()));
+                attrs.insert("_FillValue".to_string(), AttributeValue::Float(-9999.0));
+            },
+            "QVAPOR" => {
+                attrs.insert("units".to_string(), AttributeValue::String("kg/kg".to_string()));
+                attrs.insert("_FillValue".to_string(), AttributeValue::Float(-9999.0));
+            },
+            _ => {}
+        }
+        
+        Ok(attrs)
+    }
+    
+    fn get_global_attribute(&self, attribute_name: &str) -> Result<AttributeValue, DataReaderError> {
+        match attribute_name {
+            "title" => Ok(AttributeValue::String("NetCDF Test Data".to_string())),
+            "source" => Ok(AttributeValue::String("QIBT Rust".to_string())),
+            _ => Err(DataReaderError::MissingAttribute(attribute_name.to_string())),
+        }
+    }
+    
+    fn get_variable_attribute(
+        &self,
+        variable_name: &str,
+        attribute_name: &str
+    ) -> Result<AttributeValue, DataReaderError> {
+        match (variable_name, attribute_name) {
+            ("U" | "V" | "W", "units") => Ok(AttributeValue::String("m/s".to_string())),
+            ("T", "units") => Ok(AttributeValue::String("K".to_string())),
+            ("QVAPOR", "units") => Ok(AttributeValue::String("kg/kg".to_string())),
+            (_, "_FillValue") => Ok(AttributeValue::Float(-9999.0)),
+            _ => Err(DataReaderError::MissingAttribute(format!("{}.{}", variable_name, attribute_name))),
+        }
+    }
+    
+    fn get_path(&self) -> Option<PathBuf> {
+        Some(PathBuf::from(&self.file_path))
     }
 }

@@ -5,8 +5,10 @@ pub mod writer;
 
 pub use reader::*;
 pub use writer::*;
+pub mod generic_accessor;
 
 use ndarray::Array4;
+use crate::math::interpolate::{FieldDataAccess, ArrayFieldData};
 
 /// Common data structures for meteorological data
 #[derive(Debug, Clone)]
@@ -54,6 +56,12 @@ pub struct MeteoData {
     pub grid: MeteoGrid,
     /// Meteorological fields
     pub fields: Vec<MeteoField>,
+}
+
+impl Default for MeteoData {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MeteoData {

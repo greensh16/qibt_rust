@@ -2,6 +2,7 @@ use crate::{
     config::Config,
     data_io::{NetCDFReader, NetCDFWriter},
     trajectory::{LegacyParcel, TrajectoryPoint},
+    io::DataReader,
 };
 use crossbeam_channel::{self, Receiver, Sender};
 use rayon::prelude::*;
@@ -40,6 +41,113 @@ pub fn compute_trajectories_parallel(
         .collect();
 
     trajectories
+}
+
+/// Generic parallel trajectory computation that works with any DataReader
+/// This replaces NetCDF-specific assumptions with trait-based access
+pub fn compute_trajectories_parallel_generic<T: DataReader + Sync>(
+    config: &Config,
+    mut parcels: Vec<LegacyParcel>,
+    reader: &T,
+) -> Result<Vec<Vec<crate::trajectory::TrajectoryPoint>>, String> {
+    println!(
+        "Computing {} trajectories in parallel using {} threads (generic reader)",
+        parcels.len(),
+        rayon::current_num_threads()
+    );
+
+    // Process parcels in parallel using Rayon
+    let trajectories: Result<Vec<_>, String> = parcels
+        .par_iter_mut()
+        .enumerate()
+        .map(|(i, parcel)| {
+            // Each thread gets its own writer (in practice, we'd need thread-safe writers)
+            let writer_path = format!("trajectory_{:04}.nc", i);
+            let writer = NetCDFWriter::new(&writer_path);
+
+            // Reset parcel to initial conditions
+            parcel.reset();
+
+            // Integrate the trajectory using generic reader
+            crate::trajectory::integrate_back_trajectory_generic(config, parcel, reader, &writer)?;
+
+            // Return the trajectory points
+            Ok(parcel.trajectory.clone())
+        })
+        .collect();
+
+    trajectories
+}
+
+/// Generic grid processing for multiple starting locations
+pub fn process_grid_parallel_generic<T: DataReader + Sync>(
+    config: &Config,
+    grid_lons: &[f64],
+    grid_lats: &[f64],
+    grid_pressures: &[f64],
+    reader: &T,
+) -> Result<Vec<Vec<crate::trajectory::TrajectoryPoint>>, String> {
+    // Create all grid combinations
+    let grid_points: Vec<(f64, f64, f64)> = grid_lons
+        .iter()
+        .flat_map(|&lon| {
+            grid_lats.iter().flat_map(move |&lat| {
+                grid_pressures
+                    .iter()
+                    .map(move |&pressure| (lon, lat, pressure))
+            })
+        })
+        .collect();
+
+    println!("Processing {} grid points in parallel (generic reader)", grid_points.len());
+
+    // Process grid points in parallel using Rayon
+    let (tx, rx): (Sender<Vec<TrajectoryPoint>>, Receiver<Vec<TrajectoryPoint>>) =
+        crossbeam_channel::unbounded();
+    let write_mutex = Arc::new(Mutex::new(NetCDFWriter::new("output.nc")));
+    let tx_clone = tx.clone();
+
+    // Collect trajectories in a separate thread-safe structure
+    let trajectories = Arc::new(Mutex::new(Vec::new()));
+    let trajectories_clone = Arc::clone(&trajectories);
+
+    (0..grid_points.len()).into_par_iter().for_each(|idx| {
+        let &(lon, lat, pressure) = &grid_points[idx];
+        let mut parcel = LegacyParcel::new(idx as u32, lon, lat, pressure, config.start_time);
+
+        // Create a temporary writer for this trajectory
+        let writer_path = format!("trajectory_{:06}.nc", idx);
+        let writer = NetCDFWriter::new(&writer_path);
+
+        // Integrate trajectory within the thread using generic reader
+        if let Ok(_) =
+            crate::trajectory::integrate_back_trajectory_generic(config, &mut parcel, reader, &writer)
+        {
+            // Store trajectory in the shared collection
+            let mut trajectories_guard = trajectories_clone.lock().unwrap();
+            trajectories_guard.push(parcel.trajectory.clone());
+
+            // Also send to channel for potential streaming write
+            let _ = tx_clone.send(parcel.trajectory.clone());
+        }
+    });
+
+    // Close the channel sender
+    drop(tx);
+    drop(tx_clone);
+
+    // Use a consumer thread to write the data from the channel
+    std::thread::spawn(move || {
+        for trajectory in rx.iter() {
+            if let Ok(writer) = write_mutex.lock() {
+                let _ = writer.write_trajectory(&trajectory);
+            }
+        }
+    });
+
+    // Return the collected trajectories
+    let final_trajectories = trajectories.lock().unwrap().clone();
+    Ok(final_trajectories)
 }
 
 /// Parallel grid processing for multiple starting locations

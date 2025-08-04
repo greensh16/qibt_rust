@@ -408,11 +408,8 @@ fn generate_point_parcels(config: &ReleaseConfig) -> Vec<Parcel> {
 /// Generate parcels along a line (e.g., flight track)
 fn generate_line_parcels(config: &ReleaseConfig, waypoints: &[(f64, f64, f64)]) -> Vec<Parcel> {
     let mut parcels = Vec::new();
-    let mut id = 0;
-
-    for &(lon, lat, pressure) in waypoints {
-        parcels.push(Parcel::new(id, lon, lat, pressure, config.time_start));
-        id += 1;
+    for (id, &(lon, lat, pressure)) in waypoints.iter().enumerate() {
+        parcels.push(Parcel::new(id as u32, lon, lat, pressure, config.time_start));
     }
 
     parcels

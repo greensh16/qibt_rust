@@ -1,6 +1,7 @@
 pub mod benchmark;
 pub mod config;
 pub mod data_io;
+pub mod io;
 pub mod math;
 pub mod parallel;
 pub mod time_utils;

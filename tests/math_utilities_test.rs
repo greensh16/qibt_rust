@@ -1,6 +1,7 @@
 use ndarray::Array1;
 use qibt_rust::config::Constants;
 use qibt_rust::math::*;
+use qibt_rust::math::interpolate::{VecFieldData, interpolate_field_generic};
 
 #[test]
 fn test_lin_interp() {
@@ -187,7 +188,8 @@ fn test_deterministic_interpolation() {
     let levels = vec![1000.0];
     let times = vec![0.0];
 
-    let result = interpolate_meteo_field(
+    // Test legacy interface
+    let result_legacy = interpolate_meteo_field(
         &data,
         &longitudes,
         &latitudes,
@@ -200,6 +202,28 @@ fn test_deterministic_interpolation() {
     )
     .unwrap();
 
-    // Should interpolate to center value: (1+2+3+4)/4 = 2.5
-    assert!((result - 2.5).abs() < 1e-10);
+    // Test generic interface
+    let field_data = VecFieldData {
+        data: &data,
+        longitudes: &longitudes,
+        latitudes: &latitudes,
+        levels: &levels,
+        times: &times,
+    };
+    
+    let result_generic = interpolate_field_generic(
+        &field_data,
+        0.5,    // lon
+        0.5,    // lat
+        1000.0, // level
+        0.0,    // time
+    )
+    .unwrap();
+
+    // Both should interpolate to center value: (1+2+3+4)/4 = 2.5
+    assert!((result_legacy - 2.5).abs() < 1e-10);
+    assert!((result_generic - 2.5).abs() < 1e-10);
+    
+    // Both interfaces should give the same result
+    assert!((result_legacy - result_generic).abs() < 1e-10);
 }

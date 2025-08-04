@@ -27,11 +27,8 @@ pub fn get_variable_units(variable_name: &str) -> String {
 }
 
 /// Get the missing value commonly used for a meteorological variable
-pub fn get_missing_value(variable_name: &str) -> f32 {
-    match variable_name {
-        // Standard WRF missing value
-        _ => -9999.0,
-    }
+pub fn get_missing_value(_variable_name: &str) -> f32 {
+    -9999.0
 }
 
 /// Create a map of variable names to their units

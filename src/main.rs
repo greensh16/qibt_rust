@@ -3,6 +3,7 @@ use qibt_rust::{
     benchmark::{BenchmarkSuite, run_flamegraph_profiling},
     config::Config,
     data_io::{NetCDFReader, MultiFileDataLoader},
+    io::{Dataset, DataReader, is_netcdf_format, is_zarr_format},
     math::physics::{calc_quality_factor, calc_parcel_moisture_contribution},
     time_utils,
 };
@@ -237,25 +238,76 @@ fn run_sample_test(matches: &ArgMatches) -> Result<(), String> {
 fn run_trajectory(matches: &ArgMatches) -> Result<(), String> {
     let input = matches.get_one::<String>("input").unwrap();
     let _output = matches.get_one::<String>("output").unwrap();
+    let format = matches.get_one::<String>("format").unwrap();
     let parcels = *matches.get_one::<usize>("parcels").unwrap();
     let threads = *matches.get_one::<usize>("threads").unwrap();
     let start_lat = *matches.get_one::<f64>("start-lat").unwrap();
     let start_lon = *matches.get_one::<f64>("start-lon").unwrap();
     let trajectory_length = *matches.get_one::<f64>("trajectory-length").unwrap();
 
+    // Validate format option
+    if !matches!(format.as_str(), "netcdf" | "zarr" | "auto") {
+        return Err(format!("Invalid format '{}'. Valid options are: netcdf, zarr, auto", format));
+    }
+
     println!(
         "Running trajectory computation with {} parcels, {} threads, starting at ({}, {}), for {} hours...",
         parcels, threads, start_lat, start_lon, trajectory_length
     );
+    println!("Input: {} (format: {})", input, format);
+
+    // Test format detection and data loading
+    let input_path = Path::new(input);
+    match format.as_str() {
+        "auto" => {
+            println!("Auto-detecting format...");
+            match Dataset::open(input_path) {
+                Ok(dataset) => {
+                    println!("✓ Successfully opened dataset with auto-detection");
+                    match dataset.get_metadata() {
+                        Ok(metadata) => {
+                            println!("  Variables: {}", metadata.variables.len());
+                            println!("  Dimensions: {}", metadata.dimensions.len());
+                        }
+                        Err(e) => println!("  Warning: Could not read metadata: {}", e),
+                    }
+                }
+                Err(e) => println!("✗ Failed to open dataset: {}", e),
+            }
+        }
+        "netcdf" => {
+            println!("Using NetCDF format (forced)...");
+            if let Ok(is_nc) = is_netcdf_format(input_path) {
+                if is_nc {
+                    println!("✓ Confirmed NetCDF format");
+                } else {
+                    println!("⚠ Warning: File may not be in NetCDF format");
+                }
+            }
+        }
+        "zarr" => {
+            println!("Using Zarr format (forced)...");
+            if let Ok(is_zarr) = is_zarr_format(input_path) {
+                if is_zarr {
+                    println!("✓ Confirmed Zarr format");
+                } else {
+                    println!("⚠ Warning: Path may not be a Zarr dataset");
+                }
+            }
+        }
+        _ => unreachable!(),
+    }
 
     // Create configuration
-    let mut config = Config::default();
-    config.input_path = Path::new(input).to_path_buf();
-    config.num_parcels = parcels;
-    config.num_threads = threads;
-    config.start_lat = start_lat;
-    config.start_lon = start_lon;
-    config.trajectory_length = trajectory_length;
+    let mut config = Config {
+        input_path: input_path.to_path_buf(),
+        num_parcels: parcels,
+        num_threads: threads,
+        start_lat,
+        start_lon,
+        trajectory_length,
+        ..Default::default()
+    };
 
     println!("Trajectory computation completed!");
     Ok(())
@@ -553,15 +605,22 @@ fn build_cli() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("benchmark")
+Command::new("benchmark")
                 .about("Benchmark performance with different thread counts")
                 .arg(
                     Arg::new("input")
                         .short('i')
                         .long("input")
-                        .value_name("FILE")
-                        .help("Input meteorological data file")
+                        .value_name("FILE/DIR/URL")
+                        .help("Input meteorological data file, directory, or URL")
                         .required(true),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .value_name("FORMAT")
+                        .help("Input format: netcdf, zarr, or auto")
+                        .default_value("auto"),
                 )
                 .arg(
                     Arg::new("output-dir")
@@ -593,17 +652,57 @@ fn build_cli() -> Command {
                         .long("flamegraph")
                         .help("Enable flamegraph profiling")
                         .action(clap::ArgAction::SetTrue),
+                )
+                // Cloud authentication arguments
+                .arg(
+                    Arg::new("aws-access-key-id")
+                        .long("aws-access-key-id")
+                        .value_name("KEY_ID")
+                        .help("AWS access key ID (overrides AWS_ACCESS_KEY_ID env var)"),
+                )
+                .arg(
+                    Arg::new("aws-secret-access-key")
+                        .long("aws-secret-access-key")
+                        .value_name("SECRET_KEY")
+                        .help("AWS secret access key (overrides AWS_SECRET_ACCESS_KEY env var)"),
+                )
+                .arg(
+                    Arg::new("aws-region")
+                        .long("aws-region")
+                        .value_name("REGION")
+                        .help("AWS region (overrides AWS_REGION env var)"),
+                )
+                .arg(
+                    Arg::new("endpoint-url")
+                        .long("endpoint-url")
+                        .value_name("URL")
+                        .help("Custom endpoint URL for S3-compatible services"),
+                )
+                .arg(
+                    Arg::new("chunk-size")
+                        .long("chunk-size")
+                        .value_name("BYTES")
+                        .help("Chunk size for streaming reads (default: 4MB)")
+                        .value_parser(value_parser!(usize)),
+                )
+                .arg(
+                    Arg::new("max-concurrent-requests")
+                        .long("max-concurrent-requests")
+                        .value_name("COUNT")
+                        .help("Maximum concurrent requests for cloud storage")
+                        .default_value("10")
+                        .value_parser(value_parser!(usize)),
                 ),
         )
         .subcommand(
-            Command::new("run")
+Command::new("run")
                 .about("Run trajectory computation")
                 .arg(
                     Arg::new("input")
                         .short('i')
                         .long("input")
-                        .value_name("FILE")
-                        .help("Input meteorological data file")
+                        .value_name("FILE/DIR/URL")
+                        .help("Input meteorological data file, directory, or URL")
                         .required(true),
                 )
                 .arg(
@@ -613,6 +712,13 @@ fn build_cli() -> Command {
                         .value_name("FILE")
                         .help("Output trajectory file")
                         .required(true),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .value_name("FORMAT")
+                        .help("Input format: netcdf, zarr, or auto")
+                        .default_value("auto"),
                 )
                 .arg(
                     Arg::new("parcels")
@@ -659,15 +765,22 @@ fn build_cli() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("test-sample")
+Command::new("test-sample")
                 .about("Run Rust version on 1-2 day sample for validation")
                 .arg(
                     Arg::new("input")
                         .short('i')
                         .long("input")
-                        .value_name("FILE")
-                        .help("Input meteorological data file")
+                        .value_name("FILE/DIR/URL")
+                        .help("Input meteorological data file, directory, or URL")
                         .default_value("test_data/wrfout_d01_2023-07-31_12:00:00.nc"),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .value_name("FORMAT")
+                        .help("Input format: netcdf, zarr, or auto")
+                        .default_value("auto"),
                 )
                 .arg(
                     Arg::new("output")
@@ -688,15 +801,22 @@ fn build_cli() -> Command {
                 ),
         )
         .subcommand(
-            Command::new("test-single-file")
-                .about("Test SingleFileDataLoader with user-specified NetCDF data")
+Command::new("test-single-file")
+                .about("Test SingleFileDataLoader with user-specified data file")
                 .arg(
                     Arg::new("data-file")
                         .short('f')
                         .long("file")
-                        .value_name("FILE")
-                        .help("NetCDF data file to test")
+                        .value_name("FILE/DIR/URL")
+                        .help("Data file, directory, or URL to test")
                         .default_value("test_data/single_file_test.nc"),
+                )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .value_name("FORMAT")
+                        .help("Input format: netcdf, zarr, or auto")
+                        .default_value("auto"),
                 )
                 .arg(
                     Arg::new("variable")

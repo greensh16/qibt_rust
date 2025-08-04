@@ -2,6 +2,89 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use clap::{Arg, Command};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::collections::HashMap;
+
+/// Cloud authentication configuration
+#[cfg(feature = "zarr")]
+#[derive(Debug, Clone)]
+pub struct CloudAuth {
+    /// AWS access key ID
+    pub aws_access_key_id: Option<String>,
+    /// AWS secret access key
+    pub aws_secret_access_key: Option<String>,
+    /// AWS session token (for temporary credentials)
+    pub aws_session_token: Option<String>,
+    /// AWS region
+    pub aws_region: Option<String>,
+    /// GCP service account key path
+    pub gcp_service_account_key: Option<String>,
+    /// GCP project ID
+    pub gcp_project_id: Option<String>,
+    /// Azure storage account name
+    pub azure_storage_account: Option<String>,
+    /// Azure storage account key
+    pub azure_storage_key: Option<String>,
+    /// Custom endpoint URL (for S3-compatible services)
+    pub endpoint_url: Option<String>,
+    /// Additional authentication headers
+    pub custom_headers: HashMap<String, String>,
+}
+
+#[cfg(feature = "zarr")]
+impl Default for CloudAuth {
+    fn default() -> Self {
+        Self {
+            aws_access_key_id: None,
+            aws_secret_access_key: None,
+            aws_session_token: None,
+            aws_region: None,
+            gcp_service_account_key: None,
+            gcp_project_id: None,
+            azure_storage_account: None,
+            azure_storage_key: None,
+            endpoint_url: None,
+            custom_headers: HashMap::new(),
+        }
+    }
+}
+
+/// Streaming configuration for remote data access
+#[cfg(feature = "zarr")]
+#[derive(Debug, Clone)]
+pub struct StreamingConfig {
+    /// Chunk size for streaming reads (in bytes)
+    pub chunk_size: usize,
+    /// Maximum number of concurrent requests
+    pub max_concurrent_requests: usize,
+    /// Request timeout in seconds
+    pub request_timeout_secs: u64,
+    /// Maximum number of retries for failed requests
+    pub max_retries: usize,
+    /// Base delay between retries in milliseconds
+    pub retry_delay_ms: u64,
+    /// Whether to use exponential backoff for retries
+    pub exponential_backoff: bool,
+    /// Buffer size for in-memory caching
+    pub buffer_size: usize,
+    /// Whether to enable range request optimization
+    pub enable_range_requests: bool,
+}
+
+#[cfg(feature = "zarr")]
+impl Default for StreamingConfig {
+    fn default() -> Self {
+        Self {
+            chunk_size: 4 * 1024 * 1024, // 4MB chunks
+            max_concurrent_requests: 10,
+            request_timeout_secs: 30,
+            max_retries: 3,
+            retry_delay_ms: 100,
+            exponential_backoff: true,
+            buffer_size: 64 * 1024 * 1024, // 64MB buffer
+            enable_range_requests: true,
+        }
+    }
+}
 
 /// Global configuration constants - porting MODULE global_data values
 #[derive(Clone, Debug)]
@@ -171,6 +254,12 @@ pub struct Config {
     pub num_parcels: usize,
     /// Number of parallel threads
     pub num_threads: usize,
+    /// Cloud authentication configuration
+    #[cfg(feature = "zarr")]
+    pub cloud_auth: CloudAuth,
+    /// Streaming configuration for remote data access
+    #[cfg(feature = "zarr")]
+    pub streaming_config: StreamingConfig,
 
     // Model configuration
     /// Integration method
@@ -229,6 +318,10 @@ impl Default for Config {
             time_step: 3600.0,        // 1 hour default
             num_parcels: constants.n_parcels,
             num_threads: 4,
+            #[cfg(feature = "zarr")]
+            cloud_auth: CloudAuth::default(),
+            #[cfg(feature = "zarr")]
+            streaming_config: StreamingConfig::default(),
 
             integration_method: IntegrationMethod::ImplicitBackward,
             output_frequency: 1.0, // hourly output
@@ -470,6 +563,10 @@ impl Config {
             time_step,
             num_parcels,
             num_threads,
+            #[cfg(feature = "zarr")]
+            cloud_auth: CloudAuth::default(),
+            #[cfg(feature = "zarr")]
+            streaming_config: StreamingConfig::default(),
             integration_method,
             output_frequency,
             enable_qc,
@@ -510,7 +607,7 @@ impl Config {
     /// Convert Julian Day Number to DateTime
     pub fn julian_to_datetime(jd: f64) -> DateTime<Utc> {
         let timestamp = (jd - 2440587.5) * 86400.0;
-        DateTime::<Utc>::from_timestamp(timestamp as i64, 0).unwrap_or_else(|| Utc::now())
+        DateTime::<Utc>::from_timestamp(timestamp as i64, 0).unwrap_or(Utc::now())
     }
 
     /// Create a Config for testing purposes (bypasses CLI parsing)

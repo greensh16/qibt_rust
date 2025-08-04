@@ -1,8 +1,9 @@
 use super::{LegacyParcel, Parcel, TrajectoryPoint};
 use crate::{
     config::Config,
-    data_io::{NetCDFReader, NetCDFWriter},
+    data_io::{NetCDFReader, NetCDFWriter, generic_accessor::MultiFieldAccessor},
     math::physics,
+    io::DataReader,
 };
 
 /// Backward trajectory integration (simple backward Euler method)
@@ -182,7 +183,126 @@ pub fn implicit_back_traj_w(
     new_parcel_level_w(parcel, w_wind, dt);
 }
 
-/// Get wind components at specified location and time
+/// Generic trajectory integration that works with any data reader
+/// This replaces NetCDF-specific assumptions with trait-based access
+pub fn integrate_back_trajectory_generic<T: DataReader>(
+    config: &Config,
+    parcel: &mut LegacyParcel,
+    reader: &T,
+    writer: &NetCDFWriter,
+) -> Result<(), String> {
+    // Create multi-field accessor for all meteorological variables
+    let field_names = ["U", "V", "W", "T"]; // u_wind, v_wind, w_wind, temperature
+    let field_accessor = MultiFieldAccessor::from_data_reader(reader, &field_names)
+        .map_err(|e| format!("Failed to create field accessor: {}", e))?;
+    
+    // Set up the integration time sequence
+    let times = crate::time_utils::generate_time_sequence(
+        config.start_time,
+        config.start_time - config.trajectory_length,
+        -config.time_step / 3600.0, // time step is negative for backward integration
+    );
+
+    for &time in &times {
+        // Interpolate meteorological data at parcel location using generic interface
+        let temperature = field_accessor.interpolate_field(
+            "T",
+            parcel.current_longitude,
+            parcel.current_latitude,
+            parcel.current_pressure,
+            time,
+        )?;
+
+        let u_wind = field_accessor.interpolate_field(
+            "U",
+            parcel.current_longitude,
+            parcel.current_latitude,
+            parcel.current_pressure,
+            time,
+        )?;
+        
+        let v_wind = field_accessor.interpolate_field(
+            "V",
+            parcel.current_longitude,
+            parcel.current_latitude,
+            parcel.current_pressure,
+            time,
+        )?;
+        
+        let w_wind = field_accessor.interpolate_field(
+            "W",
+            parcel.current_longitude,
+            parcel.current_latitude,
+            parcel.current_pressure,
+            time,
+        )?;
+
+        // Update parcel conditions based on physics
+        let new_point = TrajectoryPoint {
+            time,
+            longitude: parcel.current_longitude, // updated by physics logic
+            latitude: parcel.current_latitude,   // updated by physics logic
+            pressure: parcel.current_pressure,   // updated by physics logic
+            temperature,
+            u_wind, // from interpolation
+            v_wind, // from interpolation
+            w_wind, // from interpolation
+            potential_temperature: physics::potential_temperature(
+                temperature,
+                parcel.current_pressure,
+                &config.constants,
+            ),
+            mixing_ratio: None,
+            relative_humidity: None,
+        };
+
+        // Add the new point to the parcel's trajectory
+        parcel.add_trajectory_point(new_point);
+
+        // Check boundaries
+        parcel.check_boundaries(config.constants.p0, 0.0); // surface at p0, top at 0 hPa
+        if !parcel.is_active {
+            println!(
+                "Parcel {} has reached boundary at time {:.2}",
+                parcel.id, time
+            );
+            break;
+        }
+    }
+
+    // Output the trajectory data
+    writer.write_trajectory(&parcel.trajectory)?;
+
+    Ok(())
+}
+
+/// Generic wind interpolation that works with any field accessor
+pub fn get_wind_at_location_generic(
+    field_accessor: &MultiFieldAccessor,
+    lon: f64,
+    lat: f64,
+    pressure: f64,
+    time: f64,
+) -> Result<(f64, f64, f64), String> {
+    let u_wind = field_accessor.interpolate_field("U", lon, lat, pressure, time)?;
+    let v_wind = field_accessor.interpolate_field("V", lon, lat, pressure, time)?;
+    let w_wind = field_accessor.interpolate_field("W", lon, lat, pressure, time)?;
+    
+    Ok((u_wind, v_wind, w_wind))
+}
+
+/// Generic temperature interpolation that works with any field accessor
+pub fn get_temperature_at_location_generic(
+    field_accessor: &MultiFieldAccessor,
+    lon: f64,
+    lat: f64,
+    pressure: f64,
+    time: f64,
+) -> Result<f64, String> {
+    field_accessor.interpolate_field("T", lon, lat, pressure, time)
+}
+
+/// Legacy NetCDF-specific wind interpolation (for backward compatibility)
 fn get_wind_at_location(
     _reader: &NetCDFReader,
     lon: f64,

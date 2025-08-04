@@ -1,5 +1,6 @@
-use ndarray::{Array1, Array2, Array3, Zip};
+use ndarray::{Array1, Array2, Array3, Array4, Zip};
 use num_traits::Float;
+use std::collections::HashMap;
 
 /// Generic linear interpolation between two values
 /// Replicates Fortran lin_interp with generic Float type
@@ -280,23 +281,108 @@ pub fn find_grid_indices(coords: &[f64], target: f64) -> Result<(usize, usize, f
     Ok((left, right, weight))
 }
 
-/// Interpolate meteorological field at given location and time
-pub fn interpolate_meteo_field(
-    field_data: &Vec<Vec<Vec<Vec<f64>>>>, // [time][level][lat][lon]
-    longitudes: &[f64],
-    latitudes: &[f64],
-    levels: &[f64],
-    times: &[f64],
+/// Generic trait for data access that works with different readers (NetCDF, Zarr, etc.)
+/// This trait abstracts away the specific data format and provides a common interface
+/// for meteorological field interpolation.
+pub trait FieldDataAccess {
+    /// Get the shape of the data field [time, level, lat, lon]
+    fn get_shape(&self) -> (usize, usize, usize, usize);
+    
+    /// Get a data value at specific indices [time, level, lat, lon]
+    fn get_value(&self, time_idx: usize, level_idx: usize, lat_idx: usize, lon_idx: usize) -> Result<f64, String>;
+    
+    /// Get coordinate arrays
+    fn get_coordinates(&self) -> Result<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>), String>; // (lon, lat, lev, time)
+}
+
+/// Implementation for legacy nested Vec structure (for backward compatibility)
+pub struct VecFieldData<'a> {
+    pub data: &'a [Vec<Vec<Vec<f64>>>],
+    pub longitudes: &'a [f64],
+    pub latitudes: &'a [f64], 
+    pub levels: &'a [f64],
+    pub times: &'a [f64],
+}
+
+impl<'a> FieldDataAccess for VecFieldData<'a> {
+    fn get_shape(&self) -> (usize, usize, usize, usize) {
+        let nt = self.data.len();
+        let nk = if nt > 0 { self.data[0].len() } else { 0 };
+        let nj = if nk > 0 { self.data[0][0].len() } else { 0 };
+        let ni = if nj > 0 { self.data[0][0][0].len() } else { 0 };
+        (nt, nk, nj, ni)
+    }
+    
+    fn get_value(&self, time_idx: usize, level_idx: usize, lat_idx: usize, lon_idx: usize) -> Result<f64, String> {
+        if time_idx >= self.data.len() {
+            return Err(format!("Time index {} out of bounds", time_idx));
+        }
+        if level_idx >= self.data[time_idx].len() {
+            return Err(format!("Level index {} out of bounds", level_idx));
+        }
+        if lat_idx >= self.data[time_idx][level_idx].len() {
+            return Err(format!("Latitude index {} out of bounds", lat_idx));
+        }
+        if lon_idx >= self.data[time_idx][level_idx][lat_idx].len() {
+            return Err(format!("Longitude index {} out of bounds", lon_idx));
+        }
+        Ok(self.data[time_idx][level_idx][lat_idx][lon_idx])
+    }
+    
+    fn get_coordinates(&self) -> Result<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>), String> {
+        Ok((self.longitudes.to_vec(), self.latitudes.to_vec(), self.levels.to_vec(), self.times.to_vec()))
+    }
+}
+
+/// Implementation for ndarray-based data (modern approach)
+pub struct ArrayFieldData<'a> {
+    pub data: &'a Array4<f32>, // [j, i, k, t] layout from readers
+    pub longitudes: &'a [f64],
+    pub latitudes: &'a [f64],
+    pub levels: &'a [f64], 
+    pub times: &'a [f64],
+}
+
+impl<'a> FieldDataAccess for ArrayFieldData<'a> {
+    fn get_shape(&self) -> (usize, usize, usize, usize) {
+        let shape = self.data.shape();
+        // Data is in [j, i, k, t] layout, convert to [t, k, j, i] for API compatibility
+        (shape[3], shape[2], shape[0], shape[1])
+    }
+    
+    fn get_value(&self, time_idx: usize, level_idx: usize, lat_idx: usize, lon_idx: usize) -> Result<f64, String> {
+        let shape = self.data.shape();
+        
+        // Convert from [t, k, j, i] indices to [j, i, k, t] indices
+        if lat_idx >= shape[0] || lon_idx >= shape[1] || level_idx >= shape[2] || time_idx >= shape[3] {
+            return Err(format!("Index out of bounds: t={}, k={}, j={}, i={}", time_idx, level_idx, lat_idx, lon_idx));
+        }
+        
+        // Access data with [j, i, k, t] indexing
+        let value = self.data[[lat_idx, lon_idx, level_idx, time_idx]];
+        Ok(value as f64)
+    }
+    
+    fn get_coordinates(&self) -> Result<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>), String> {
+        Ok((self.longitudes.to_vec(), self.latitudes.to_vec(), self.levels.to_vec(), self.times.to_vec()))
+    }
+}
+
+/// Generic interpolation function that works with any FieldDataAccess implementation
+pub fn interpolate_field_generic<T: FieldDataAccess>(
+    field_accessor: &T,
     target_lon: f64,
     target_lat: f64,
     target_lev: f64,
     target_time: f64,
 ) -> Result<f64, String> {
+    let (longitudes, latitudes, levels, times) = field_accessor.get_coordinates()?;
+    
     // Find indices and weights for each dimension
-    let (lon_i0, lon_i1, lon_w) = find_grid_indices(longitudes, target_lon)?;
-    let (lat_i0, lat_i1, lat_w) = find_grid_indices(latitudes, target_lat)?;
-    let (lev_i0, lev_i1, lev_w) = find_grid_indices(levels, target_lev)?;
-    let (time_i0, time_i1, time_w) = find_grid_indices(times, target_time)?;
+    let (lon_i0, lon_i1, lon_w) = find_grid_indices(&longitudes, target_lon)?;
+    let (lat_i0, lat_i1, lat_w) = find_grid_indices(&latitudes, target_lat)?;
+    let (lev_i0, lev_i1, lev_w) = find_grid_indices(&levels, target_lev)?;
+    let (time_i0, time_i1, time_w) = find_grid_indices(&times, target_time)?;
 
     // Extract 2x2x2x2 data cube
     let mut data_cube = [[[0.0; 2]; 2]; 2];
@@ -307,8 +393,8 @@ pub fn interpolate_meteo_field(
             let li = if l == 0 { lev_i0 } else { lev_i1 };
             for lat in 0..2 {
                 let lati = if lat == 0 { lat_i0 } else { lat_i1 };
-                let val0 = field_data[ti][li][lati][lon_i0];
-                let val1 = field_data[ti][li][lati][lon_i1];
+                let val0 = field_accessor.get_value(ti, li, lati, lon_i0)?;
+                let val1 = field_accessor.get_value(ti, li, lati, lon_i1)?;
                 data_cube[t][l][lat] = val0 * (1.0 - lon_w) + val1 * lon_w;
             }
         }
@@ -328,4 +414,28 @@ pub fn interpolate_meteo_field(
     }
 
     Ok(result)
+}
+
+/// Legacy interpolation function for backward compatibility
+pub fn interpolate_meteo_field(
+    field_data: &[Vec<Vec<Vec<f64>>>], // [time][level][lat][lon]
+    longitudes: &[f64],
+    latitudes: &[f64],
+    levels: &[f64],
+    times: &[f64],
+    target_lon: f64,
+    target_lat: f64,
+    target_lev: f64,
+    target_time: f64,
+) -> Result<f64, String> {
+    // Use the generic interpolation with legacy Vec wrapper
+    let field_accessor = VecFieldData {
+        data: field_data,
+        longitudes,
+        latitudes, 
+        levels,
+        times,
+    };
+    
+    interpolate_field_generic(&field_accessor, target_lon, target_lat, target_lev, target_time)
 }

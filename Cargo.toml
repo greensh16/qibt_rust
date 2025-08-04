@@ -1,7 +1,26 @@
 [package]
 name = "qibt_rust"
-version = "1.0.0"
-edition = "2024"
+version = "1.1.0"
+edition = "2021"
+authors = ["QIBT Rust Contributors"]
+description = "Quasi-Isentropic Back-Trajectory Analysis Tool in Rust with unified data format support and cloud integration"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/qibt_rust"
+homepage = "https://github.com/user/qibt_rust"
+documentation = "https://docs.rs/qibt_rust"
+readme = "README.md"
+keywords = ["atmospheric", "meteorology", "trajectory", "netcdf", "zarr"]
+categories = ["science", "simulation", "data-structures"]
+include = [
+    "src/**/*",
+    "examples/**/*",
+    "Cargo.toml",
+    "README.md",
+    "CHANGELOG.md",
+    "MIGRATION_GUIDE.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+]
 
 [dependencies]
 netcdf = "0.11"
@@ -14,12 +33,48 @@ thiserror = "1.0"
 rand = "0.9.2"
 crossbeam-channel = "0.5"
 flamegraph = { version = "0.6", optional = true }
+serde_json = { version = "1.0", optional = true }
+bytes = { version = "1.5", optional = true }
+futures = { version = "0.3", optional = true }
+tokio = { version = "1.47", optional = true, features = ["rt", "rt-multi-thread", "io-util", "fs"] }
+
+# Zarr support (behind feature flag)
+zarrs = { version = "0.21.2", optional = true, default-features = false, features = ["ndarray", "gzip", "zstd", "blosc", "crc32c", "sharding", "transpose"] }
+zarrs_object_store = { version = "0.4.3", optional = true }
+zarrs_http = { version = "0.2.2", optional = true }
+object_store = { version = "0.12.3", optional = true, default-features = false }
+async-compression = { version = "0.4.27", optional = true, default-features = false, features = ["tokio", "gzip", "zstd"] }
 
 # Optional benchmarking dependencies
 [dev-dependencies]
 criterion = "0.5"
+tempfile = "3.8"
+flate2 = "1.0"
 
 [features]
 default = []
+netcdf = []
 optimized = ["flamegraph"]
 f32_precision = []
+
+# Zarr support with cloud backends
+zarr = [
+    "dep:zarrs",
+    "dep:zarrs_object_store", 
+    "dep:zarrs_http",
+    "dep:object_store",
+    "dep:async-compression",
+    "dep:tokio",
+    "dep:serde_json",
+    "dep:bytes",
+    "dep:futures",
+    "object_store/http",
+    "object_store/fs"
+]
+
+# Individual cloud backend features (require zarr feature)
+zarr_s3 = ["zarr", "zarrs_object_store/aws", "object_store/aws"]
+zarr_gcs = ["zarr", "zarrs_object_store/gcp", "object_store/gcp"]
+zarr_http = ["zarr", "zarrs_object_store/http", "object_store/http"]
+zarr_azure = ["zarr", "zarrs_object_store/azure", "object_store/azure"]
+zarr_async = ["zarr", "zarrs/async"]

@@ -94,12 +94,14 @@ impl BenchmarkSuite {
         _enable_flamegraph: bool,
     ) -> Result<BenchmarkResult, String> {
         // Create configuration
-        let mut config = Config::default();
-        config.input_path = Path::new(input_file).to_path_buf();
-        config.num_parcels = parcel_count;
-        config.num_threads = thread_count;
-        config.trajectory_length = 48.0; // 2 days
-        config.time_step = 600.0; // 10 minutes
+        let config = Config {
+            input_path: Path::new(input_file).to_path_buf(),
+            num_parcels: parcel_count,
+            num_threads: thread_count,
+            trajectory_length: 48.0,
+            time_step: 600.0,
+            ..Default::default()
+        };
 
         // Create initial parcels
         let parcels: Vec<LegacyParcel> = (0..parcel_count)
