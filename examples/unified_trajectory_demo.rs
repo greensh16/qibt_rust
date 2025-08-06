@@ -1,9 +1,9 @@
-/// Example demonstrating unified trajectory computation with different data readers
-/// This shows how the same trajectory computation pipeline can work with both
-/// NetCDF and Zarr data readers without code duplication.
+//! Example demonstrating unified trajectory computation with different data readers
+//! This shows how the same trajectory computation pipeline can work with both
+//! NetCDF and Zarr data readers without code duplication.
 
 use qibt_rust::{
-    config::{Config, Constants},
+    config::Config,
     data_io::{NetCDFReader, NetCDFWriter},
     io::{DataReader},
     trajectory::{LegacyParcel, integrate_back_trajectory_generic},
@@ -18,10 +18,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Unified Trajectory Computation Demo ===");
     
     // Configuration - same for both readers
-    let mut config = Config::default();
-    config.start_time = 0.0;
-    config.trajectory_length = 48.0; // 48 hours
-    config.time_step = 3600.0; // 1 hour in seconds
+    let config = Config {
+        start_time: 0.0,
+        trajectory_length: 48.0, // 48 hours
+        time_step: 3600.0, // 1 hour in seconds
+        ..Default::default()
+    };
     
     // Create sample parcels
     let parcels = vec![
@@ -135,7 +137,7 @@ fn compute_with_zarr(
     let writer = NetCDFWriter::new("output_zarr_single.nc");
     
     println!("Computing single trajectory with generic interface...");
-    match integrate_back_trajectory_generic(config, &mut parcel, reader.as_ref(), &writer) {
+    match integrate_back_trajectory_generic(config, &mut parcel, &reader, &writer) {
         Ok(_) => println!("Single trajectory completed: {} points", parcel.trajectory.len()),
         Err(e) => println!("Single trajectory failed: {}", e),
     }
@@ -157,7 +159,7 @@ fn demonstrate_unified_interface(
     println!("can work with any data reader that implements the DataReader trait.");
     
     // Generic function that works with any DataReader
-    fn compute_with_any_reader<T: DataReader>(
+    fn compute_with_any_reader<T: DataReader + ?Sized>(
         config: &Config,
         parcels: &[LegacyParcel],
         reader: &T,
@@ -167,7 +169,7 @@ fn demonstrate_unified_interface(
         
         // This exact same code works for NetCDF, Zarr, or any other DataReader implementation
         let mut parcel = parcels[0].clone();
-        let writer = NetCDFWriter::new(&format!("output_{}.nc", reader_type.to_lowercase()));
+        let writer = NetCDFWriter::new(format!("output_{}.nc", reader_type.to_lowercase()));
         
         integrate_back_trajectory_generic(config, &mut parcel, reader, &writer)?;
         
@@ -183,7 +185,7 @@ fn demonstrate_unified_interface(
     
     // Example with Zarr reader (if available)
     if let Ok(zarr_reader) = create_zarr_reader("example.zarr") {
-        if let Err(e) = compute_with_any_reader(config, parcels, zarr_reader.as_ref(), "Zarr") {
+        if let Err(e) = compute_with_any_reader(config, parcels, &zarr_reader, "Zarr") {
             println!("Zarr computation failed (expected): {}", e);
         }
     }

@@ -153,7 +153,7 @@ fn test_standard_variable_names() {
     let standard_vars = ["U", "V", "W", "T", "QVAPOR", "RAIN"];
 
     for var in &standard_vars {
-        assert!(var.len() > 0);
+        assert!(!var.is_empty());
         assert!(
             var.chars()
                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())

@@ -3,7 +3,6 @@ use crate::data_io::output_trait::{DataWriter, WriteError, TrajectoryMetadata as
 use chrono::Utc;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
 /// NetCDF writer for trajectory output with parallel support
 pub struct NetCDFWriter {

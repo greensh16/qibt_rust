@@ -197,6 +197,7 @@ pub fn richardson_number(
 }
 
 /// Mixed layer height calculation (simple bulk Richardson method)
+#[allow(clippy::too_many_arguments)]
 pub fn mixed_layer_height(
     surface_theta: f64,
     surface_u: f64,
@@ -340,7 +341,7 @@ pub fn calc_quality_factor(
     } else {
         // Above PBL, apply conservation scaling
         if grid_qv > 0.0 {
-            (parcel_qv / grid_qv).min(1.0).max(0.0)
+            (parcel_qv / grid_qv).clamp(0.0, 1.0)
         } else {
             0.0
         }

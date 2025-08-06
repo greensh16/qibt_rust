@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(feature = "zarr")]
 use {
-    ndarray::{ArrayD, Axis},
+    ndarray::Axis,
     serde_json,
 };
 
@@ -16,6 +16,7 @@ use {
 pub struct ZarrReader {
     path: Option<PathBuf>,
     metadata: Option<FileMetadata>,
+    #[allow(dead_code)]
     variable_mapping: HashMap<String, String>,
 }
 
@@ -52,6 +53,7 @@ impl ZarrReader {
     }
 
     /// Map Zarr variable name to internal name
+    #[allow(dead_code)]
     pub fn map_variable_name(&self, zarr_name: &str) -> String {
         self.variable_mapping
             .get(zarr_name)
@@ -142,6 +144,7 @@ impl ZarrReader {
 
     #[cfg(feature = "zarr")]
     /// Parse Zarr attributes to our AttributeValue format
+    #[allow(dead_code)]
     fn parse_zarr_attributes(zarr_attrs: &serde_json::Map<String, serde_json::Value>) -> Attributes {
         let mut attributes = HashMap::new();
         
@@ -359,7 +362,7 @@ impl DataReader for ZarrReader {
             let lon_data = self.read_variable("XLONG")?;
             
             // Create default levels
-            let default_levels = vec![1000.0, 850.0, 700.0, 500.0, 300.0];
+            let default_levels = [1000.0, 850.0, 700.0, 500.0, 300.0];
             let level_data = Array4::from_shape_fn((1, default_levels.len(), 1, 1), |(_, k, _, _)| default_levels[k]);
             
             // Extract 2D arrays from 4D data (take first time step, first level if applicable)
@@ -385,7 +388,7 @@ impl DataReader for ZarrReader {
         Ok(metadata.global_attributes.clone())
     }
     
-    fn get_variable_attributes(&self, variable_name: &str) -> Result<Attributes, DataReaderError> {
+    fn get_variable_attributes(&self, _variable_name: &str) -> Result<Attributes, DataReaderError> {
         // Return empty attributes for now - could be extended
         Ok(HashMap::new())
     }

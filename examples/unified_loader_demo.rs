@@ -1,7 +1,7 @@
-/// Demonstration of the unified loader functionality
-/// 
-/// This example shows how the Dataset::open() method can automatically detect
-/// and handle different file formats (NetCDF and Zarr) using the unified interface.
+//! Demonstration of the unified loader functionality
+//! 
+//! This example shows how the Dataset::open() method can automatically detect
+//! and handle different file formats (NetCDF and Zarr) using the unified interface.
 
 use qibt_rust::io::{Dataset, DataReader, DataReaderError, is_netcdf_format, is_zarr_format};
 use std::path::Path;

@@ -305,7 +305,7 @@ fn run_trajectory(matches: &ArgMatches) -> Result<(), String> {
     }
 
     // Create configuration
-    let mut config = Config {
+    let _config = Config {
         input_path: input_path.to_path_buf(),
         num_parcels: parcels,
         num_threads: threads,
@@ -377,7 +377,7 @@ impl SingleFileDataLoader {
                                 Err(_) => return Err(format!("Failed to parse time string: '{}'", time_str)),
                             }
                         } else {
-                            return Err(format!("Invalid time array dimensions"));
+                    return Err("Invalid time array dimensions".to_string());
                         }
                     }
                     
@@ -415,7 +415,7 @@ impl SingleFileDataLoader {
                                 Err(_) => return Err(format!("Failed to parse time string: '{}'", time_str)),
                             }
                         } else {
-                            return Err(format!("Invalid time array dimensions"));
+                    return Err("Invalid time array dimensions".to_string());
                         }
                     }
                     

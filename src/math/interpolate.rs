@@ -1,6 +1,5 @@
 use ndarray::{Array1, Array2, Array3, Array4, Zip};
 use num_traits::Float;
-use std::collections::HashMap;
 
 /// Generic linear interpolation between two values
 /// Replicates Fortran lin_interp with generic Float type
@@ -84,6 +83,7 @@ pub fn bilin_interp<T: Float>(f00: T, f01: T, f10: T, f11: T, fac_x: T, fac_y: T
 }
 
 /// Bilinear interpolation in 2D grid (traditional interface)
+#[allow(clippy::too_many_arguments)]
 pub fn bilinear_interpolate(
     x0: f64,
     y0: f64,
@@ -110,6 +110,7 @@ pub fn bilinear_interpolate(
 }
 
 /// Trilinear interpolation in 3D grid
+#[allow(clippy::too_many_arguments)]
 pub fn trilinear_interpolate(
     x0: f64,
     y0: f64,
@@ -152,6 +153,7 @@ pub fn trilinear_interpolate(
 }
 
 /// 4D interpolation (space + time) for meteorological data
+#[allow(clippy::too_many_arguments)]
 pub fn quadrilinear_interpolate(
     lon: f64,
     lat: f64,
@@ -281,6 +283,9 @@ pub fn find_grid_indices(coords: &[f64], target: f64) -> Result<(usize, usize, f
     Ok((left, right, weight))
 }
 
+/// Type alias for complex coordinate results
+type CoordinatesResult = Result<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>), String>;
+
 /// Generic trait for data access that works with different readers (NetCDF, Zarr, etc.)
 /// This trait abstracts away the specific data format and provides a common interface
 /// for meteorological field interpolation.
@@ -292,7 +297,7 @@ pub trait FieldDataAccess {
     fn get_value(&self, time_idx: usize, level_idx: usize, lat_idx: usize, lon_idx: usize) -> Result<f64, String>;
     
     /// Get coordinate arrays
-    fn get_coordinates(&self) -> Result<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>), String>; // (lon, lat, lev, time)
+    fn get_coordinates(&self) -> CoordinatesResult; // (lon, lat, lev, time)
 }
 
 /// Implementation for legacy nested Vec structure (for backward compatibility)
@@ -304,7 +309,7 @@ pub struct VecFieldData<'a> {
     pub times: &'a [f64],
 }
 
-impl<'a> FieldDataAccess for VecFieldData<'a> {
+impl FieldDataAccess for VecFieldData<'_> {
     fn get_shape(&self) -> (usize, usize, usize, usize) {
         let nt = self.data.len();
         let nk = if nt > 0 { self.data[0].len() } else { 0 };
@@ -329,7 +334,7 @@ impl<'a> FieldDataAccess for VecFieldData<'a> {
         Ok(self.data[time_idx][level_idx][lat_idx][lon_idx])
     }
     
-    fn get_coordinates(&self) -> Result<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>), String> {
+    fn get_coordinates(&self) -> CoordinatesResult {
         Ok((self.longitudes.to_vec(), self.latitudes.to_vec(), self.levels.to_vec(), self.times.to_vec()))
     }
 }
@@ -343,7 +348,7 @@ pub struct ArrayFieldData<'a> {
     pub times: &'a [f64],
 }
 
-impl<'a> FieldDataAccess for ArrayFieldData<'a> {
+impl FieldDataAccess for ArrayFieldData<'_> {
     fn get_shape(&self) -> (usize, usize, usize, usize) {
         let shape = self.data.shape();
         // Data is in [j, i, k, t] layout, convert to [t, k, j, i] for API compatibility
@@ -363,7 +368,7 @@ impl<'a> FieldDataAccess for ArrayFieldData<'a> {
         Ok(value as f64)
     }
     
-    fn get_coordinates(&self) -> Result<(Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>), String> {
+    fn get_coordinates(&self) -> CoordinatesResult {
         Ok((self.longitudes.to_vec(), self.latitudes.to_vec(), self.levels.to_vec(), self.times.to_vec()))
     }
 }
@@ -387,27 +392,27 @@ pub fn interpolate_field_generic<T: FieldDataAccess>(
     // Extract 2x2x2x2 data cube
     let mut data_cube = [[[0.0; 2]; 2]; 2];
 
-    for t in 0..2 {
+    for (t, data_t) in data_cube.iter_mut().enumerate() {
         let ti = if t == 0 { time_i0 } else { time_i1 };
-        for l in 0..2 {
+        for (l, data_tl) in data_t.iter_mut().enumerate() {
             let li = if l == 0 { lev_i0 } else { lev_i1 };
-            for lat in 0..2 {
+            for (lat, data_value) in data_tl.iter_mut().enumerate() {
                 let lati = if lat == 0 { lat_i0 } else { lat_i1 };
                 let val0 = field_accessor.get_value(ti, li, lati, lon_i0)?;
                 let val1 = field_accessor.get_value(ti, li, lati, lon_i1)?;
-                data_cube[t][l][lat] = val0 * (1.0 - lon_w) + val1 * lon_w;
+                *data_value = val0 * (1.0 - lon_w) + val1 * lon_w;
             }
         }
     }
 
     // Interpolate in remaining dimensions
     let mut result = 0.0;
-    for t in 0..2 {
+    for (t, data_t) in data_cube.iter().enumerate() {
         let tw = if t == 0 { 1.0 - time_w } else { time_w };
-        for l in 0..2 {
+        for (l, data_tl) in data_t.iter().enumerate() {
             let lw = if l == 0 { 1.0 - lev_w } else { lev_w };
-            let val0 = data_cube[t][l][0];
-            let val1 = data_cube[t][l][1];
+            let val0 = data_tl[0];
+            let val1 = data_tl[1];
             let val_interp = val0 * (1.0 - lat_w) + val1 * lat_w;
             result += val_interp * tw * lw;
         }
@@ -417,6 +422,7 @@ pub fn interpolate_field_generic<T: FieldDataAccess>(
 }
 
 /// Legacy interpolation function for backward compatibility
+#[allow(clippy::too_many_arguments)]
 pub fn interpolate_meteo_field(
     field_data: &[Vec<Vec<Vec<f64>>>], // [time][level][lat][lon]
     longitudes: &[f64],

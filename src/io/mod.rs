@@ -78,6 +78,9 @@ pub struct DimensionInfo {
 /// Global and variable attributes
 pub type Attributes = HashMap<String, AttributeValue>;
 
+/// Type alias for coordinate arrays (lat, lon, levels)
+pub type CoordinateArrays = (Array2<f32>, Array2<f32>, Array1<f32>);
+
 /// Supported attribute value types
 #[derive(Debug, Clone)]
 pub enum AttributeValue {
@@ -206,7 +209,7 @@ pub trait DataReader {
     /// 
     /// # Returns
     /// * `Result<(Array2<f32>, Array2<f32>, Array1<f32>), DataReaderError>` - (lat, lon, levels) or error
-    fn read_coordinates(&self) -> Result<(Array2<f32>, Array2<f32>, Array1<f32>), DataReaderError>;
+    fn read_coordinates(&self) -> Result<CoordinateArrays, DataReaderError>;
     
     /// Get global attributes from the file
     /// 
@@ -315,7 +318,6 @@ pub trait TimeSeriesDataReader: DataReader {
 }
 
 /// Convenience functions for creating readers
-
 /// Create a NetCDF reader
 /// 
 /// # Arguments
@@ -323,7 +325,7 @@ pub trait TimeSeriesDataReader: DataReader {
 /// 
 /// # Returns
 /// * `Result<Box<dyn DataReader>, DataReaderError>` - NetCDF reader or error
-pub fn create_netcdf_reader<P: AsRef<Path>>(path: P) -> Result<Box<dyn DataReader>, DataReaderError> {
+pub fn create_netcdf_reader<P: AsRef<Path>>(_path: P) -> Result<Box<dyn DataReader>, DataReaderError> {
     // This would be implemented when NetCDF reader is available
     Err(DataReaderError::UnsupportedOperation(
         "NetCDF reader not yet implemented".to_string()
@@ -382,15 +384,17 @@ impl Dataset {
     /// 
     /// ```rust
     /// use qibt_rust::io::Dataset;
-    /// 
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Opens NetCDF file (detected by magic bytes)
-    /// let netcdf_dataset = Dataset::open("/path/to/data.nc")?;
+    /// // let netcdf_dataset = Dataset::open("/path/to/data.nc")?;
     /// 
     /// // Opens Zarr dataset (detected by directory structure)
-    /// let zarr_dataset = Dataset::open("/path/to/data.zarr")?;
+    /// // let zarr_dataset = Dataset::open("/path/to/data.zarr")?;
     /// 
     /// // Opens Zarr dataset (detected by .zgroup file)
-    /// let zarr_dir = Dataset::open("/path/to/zarr_directory")?;
+    /// // let zarr_dir = Dataset::open("/path/to/zarr_directory")?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, DataReaderError> {
         let reader = create_reader(path)?;
@@ -495,6 +499,85 @@ impl DataReader for Dataset {
     }
 }
 
+// Implement DataReader trait for Box<dyn DataReader> to enable generic usage
+impl DataReader for Box<dyn DataReader> {
+    fn open(&mut self, path: &Path) -> Result<(), DataReaderError> {
+        self.as_mut().open(path)
+    }
+    
+    fn is_open(&self) -> bool {
+        self.as_ref().is_open()
+    }
+    
+    fn close(&mut self) {
+        self.as_mut().close()
+    }
+    
+    fn list_variables(&self) -> Result<Vec<String>, DataReaderError> {
+        self.as_ref().list_variables()
+    }
+    
+    fn get_variable_info(&self, variable_name: &str) -> Result<VariableInfo, DataReaderError> {
+        self.as_ref().get_variable_info(variable_name)
+    }
+    
+    fn list_dimensions(&self) -> Result<Vec<String>, DataReaderError> {
+        self.as_ref().list_dimensions()
+    }
+    
+    fn get_dimension_info(&self, dimension_name: &str) -> Result<DimensionInfo, DataReaderError> {
+        self.as_ref().get_dimension_info(dimension_name)
+    }
+    
+    fn get_metadata(&self) -> Result<FileMetadata, DataReaderError> {
+        self.as_ref().get_metadata()
+    }
+    
+    fn read_variable(&self, variable_name: &str) -> Result<Array4<f32>, DataReaderError> {
+        self.as_ref().read_variable(variable_name)
+    }
+    
+    fn read_variable_slice(
+        &self, 
+        variable_name: &str, 
+        indices: &[(usize, usize, usize)]
+    ) -> Result<Array4<f32>, DataReaderError> {
+        self.as_ref().read_variable_slice(variable_name, indices)
+    }
+    
+    fn read_variables(&self, variable_names: &[&str]) -> Result<HashMap<String, Array4<f32>>, DataReaderError> {
+        self.as_ref().read_variables(variable_names)
+    }
+    
+    fn read_coordinates(&self) -> Result<(Array2<f32>, Array2<f32>, Array1<f32>), DataReaderError> {
+        self.as_ref().read_coordinates()
+    }
+    
+    fn get_global_attributes(&self) -> Result<Attributes, DataReaderError> {
+        self.as_ref().get_global_attributes()
+    }
+    
+    fn get_variable_attributes(&self, variable_name: &str) -> Result<Attributes, DataReaderError> {
+        self.as_ref().get_variable_attributes(variable_name)
+    }
+    
+    fn get_global_attribute(&self, attribute_name: &str) -> Result<AttributeValue, DataReaderError> {
+        self.as_ref().get_global_attribute(attribute_name)
+    }
+    
+    fn get_variable_attribute(
+        &self, 
+        variable_name: &str, 
+        attribute_name: &str
+    ) -> Result<AttributeValue, DataReaderError> {
+        self.as_ref().get_variable_attribute(variable_name, attribute_name)
+    }
+    
+    fn get_path(&self) -> Option<PathBuf> {
+        self.as_ref().get_path()
+    }
+}
+
 /// Auto-detect file format and create appropriate reader
 /// 
 /// This function implements the format detection strategy:
@@ -541,7 +624,6 @@ pub fn create_reader<P: AsRef<Path>>(path: P) -> Result<Box<dyn DataReader>, Dat
 }
 
 /// Format detection utilities
-
 /// Check if a file is in NetCDF format by examining magic bytes
 /// 
 /// NetCDF files start with specific magic bytes:
@@ -634,10 +716,8 @@ pub fn is_zarr_format(path: &Path) -> Result<bool, DataReaderError> {
         if let Ok(entries) = std::fs::read_dir(path) {
             for entry in entries.flatten() {
                 let entry_path = entry.path();
-                if entry_path.is_dir() {
-                    if entry_path.join(".zarray").exists() || entry_path.join(".zgroup").exists() {
-                        return Ok(true);
-                    }
+                if entry_path.is_dir() && (entry_path.join(".zarray").exists() || entry_path.join(".zgroup").exists()) {
+                    return Ok(true);
                 }
             }
         }
@@ -661,16 +741,15 @@ pub fn is_zarr_format(path: &Path) -> Result<bool, DataReaderError> {
 fn is_zarr_json_file(path: &Path) -> Result<bool, DataReaderError> {
     let mut file = File::open(path)?;
     let mut reader = BufReader::new(&mut file);
-    let mut content = String::new();
     
     // Read a reasonable amount of the file to check for JSON content
     let mut buffer = [0u8; 1024];
-    match reader.read(&mut buffer) {
+    let content = match reader.read(&mut buffer) {
         Ok(bytes_read) => {
-            content = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+            String::from_utf8_lossy(&buffer[..bytes_read]).to_string()
         },
         Err(_) => return Ok(false),
-    }
+    };
     
     // Check if content looks like JSON and contains Zarr-specific fields
     if content.trim_start().starts_with('{') {
@@ -705,7 +784,7 @@ mod tests {
     fn test_attribute_value_types() {
         let string_attr = AttributeValue::String("test".to_string());
         let int_attr = AttributeValue::Int(42);
-        let float_attr = AttributeValue::Float(3.14);
+        let float_attr = AttributeValue::Float(std::f32::consts::PI);
         
         match string_attr {
             AttributeValue::String(s) => assert_eq!(s, "test"),
@@ -718,7 +797,7 @@ mod tests {
         }
         
         match float_attr {
-            AttributeValue::Float(f) => assert!((f - 3.14).abs() < 1e-6),
+            AttributeValue::Float(f) => assert!((f - std::f32::consts::PI).abs() < 1e-6),
             _ => panic!("Expected float attribute"),
         }
     }

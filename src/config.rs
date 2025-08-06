@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 /// Cloud authentication configuration
 #[cfg(feature = "zarr")]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CloudAuth {
     /// AWS access key ID
     pub aws_access_key_id: Option<String>,
@@ -30,25 +30,6 @@ pub struct CloudAuth {
     pub custom_headers: HashMap<String, String>,
 }
 
-#[cfg(feature = "zarr")]
-impl Default for CloudAuth {
-    fn default() -> Self {
-        Self {
-            aws_access_key_id: None,
-            aws_secret_access_key: None,
-            aws_session_token: None,
-            aws_region: None,
-            gcp_service_account_key: None,
-            gcp_project_id: None,
-            azure_storage_account: None,
-            azure_storage_key: None,
-            endpoint_url: None,
-            custom_headers: HashMap::new(),
-        }
-    }
-}
-
-/// Streaming configuration for remote data access
 #[cfg(feature = "zarr")]
 #[derive(Debug, Clone)]
 pub struct StreamingConfig {
@@ -616,9 +597,11 @@ impl Config {
         input_mode: InputMode,
         input_path: std::path::PathBuf,
     ) -> Result<Self, String> {
-        let mut config = Self::default();
-        config.input_mode = input_mode;
-        config.input_path = input_path;
+        let config = Self {
+            input_mode,
+            input_path,
+            ..Self::default()
+        };
         config.validate()?;
         Ok(config)
     }

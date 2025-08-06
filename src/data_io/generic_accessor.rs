@@ -1,5 +1,5 @@
-use crate::math::interpolate::{FieldDataAccess, ArrayFieldData};
-use crate::data_io::{NetCDFReader, MeteoFieldArray};
+use crate::math::interpolate::FieldDataAccess;
+use crate::data_io::NetCDFReader;
 use crate::io::DataReader;
 use ndarray::Array4;
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ impl GenericFieldAccessor {
     }
     
     /// Create accessor from any DataReader implementation
-    pub fn from_data_reader<T: DataReader>(
+    pub fn from_data_reader<T: DataReader + ?Sized>(
         reader: &T,
         field_name: &str,
     ) -> Result<Self, String> {
@@ -117,7 +117,7 @@ impl GenericFieldAccessor {
     }
     
     /// Create multiple field accessors efficiently
-    pub fn from_data_reader_multi<T: DataReader>(
+    pub fn from_data_reader_multi<T: DataReader + ?Sized>(
         reader: &T,
         field_names: &[&str],
     ) -> Result<HashMap<String, GenericFieldAccessor>, String> {
@@ -210,7 +210,7 @@ pub struct MultiFieldAccessor {
 
 impl MultiFieldAccessor {
     /// Create from any DataReader implementation
-    pub fn from_data_reader<T: DataReader>(
+    pub fn from_data_reader<T: DataReader + ?Sized>(
         reader: &T,
         field_names: &[&str],
     ) -> Result<Self, String> {

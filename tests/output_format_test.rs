@@ -1,5 +1,5 @@
 use qibt_rust::trajectory::TrajectoryPoint;
-use qibt_rust::data_io::output_trait::{DataWriter, TrajectoryMetadata, OutputFormat, create_writer};
+use qibt_rust::data_io::output_trait::{TrajectoryMetadata, OutputFormat, create_writer};
 use std::path::Path;
 use tempfile::tempdir;
 

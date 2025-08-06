@@ -120,8 +120,7 @@ pub fn process_grid_parallel_generic<T: DataReader + Sync>(
         let writer = NetCDFWriter::new(&writer_path);
 
         // Integrate trajectory within the thread using generic reader
-        if let Ok(_) =
-            crate::trajectory::integrate_back_trajectory_generic(config, &mut parcel, reader, &writer)
+        if crate::trajectory::integrate_back_trajectory_generic(config, &mut parcel, reader, &writer).is_ok()
         {
             // Store trajectory in the shared collection
             let mut trajectories_guard = trajectories_clone.lock().unwrap();
@@ -191,8 +190,7 @@ pub fn process_grid_parallel(
         let writer = NetCDFWriter::new(&writer_path);
 
         // Integrate trajectory within the thread
-        if let Ok(_) =
-            crate::trajectory::integrate_back_trajectory(config, &mut parcel, reader, &writer)
+        if crate::trajectory::integrate_back_trajectory(config, &mut parcel, reader, &writer).is_ok()
         {
             // Store trajectory in the shared collection
             let mut trajectories_guard = trajectories_clone.lock().unwrap();
@@ -255,7 +253,7 @@ pub fn process_large_dataset(
         println!(
             "Processing chunk {} of {} (parcels {}-{})",
             chunk_idx + 1,
-            (total_parcels + chunk_size - 1) / chunk_size,
+            total_parcels.div_ceil(chunk_size),
             chunk_idx * chunk_size + 1,
             (chunk_idx + 1) * chunk_size.min(total_parcels - chunk_idx * chunk_size)
         );

@@ -157,8 +157,8 @@ pub fn implicit_back_trajectory_integration(
 /// Advect parcel based on wind velocities
 fn advect(parcel: &mut Parcel, u: f32, v: f32, w: f32, dt: f32, config: &Config) {
     let constants = &config.constants;
-    let dlon = (u * dt / (constants.earth_radius as f32 * parcel.lat.to_radians().cos())) as f32;
-    let dlat = (v * dt / constants.earth_radius as f32) as f32;
+    let dlon = u * dt / (constants.earth_radius as f32 * parcel.lat.to_radians().cos());
+    let dlat = v * dt / constants.earth_radius as f32;
     let dp = w * dt;
     parcel.lon += dlon;
     parcel.lat += dlat;
@@ -185,7 +185,7 @@ pub fn implicit_back_traj_w(
 
 /// Generic trajectory integration that works with any data reader
 /// This replaces NetCDF-specific assumptions with trait-based access
-pub fn integrate_back_trajectory_generic<T: DataReader>(
+pub fn integrate_back_trajectory_generic<T: DataReader + ?Sized>(
     config: &Config,
     parcel: &mut LegacyParcel,
     reader: &T,
@@ -344,6 +344,7 @@ fn get_temperature_at_location(
 }
 
 /// Integrate parcel position using implicit method for better stability
+#[allow(clippy::too_many_arguments)]
 fn integrate_position_implicit(
     lon: f64,
     lat: f64,
@@ -372,7 +373,7 @@ fn integrate_position_implicit(
 
     let new_lon = lon + dlon;
     let new_lat = lat + dlat;
-    let new_pressure = (pressure + dp).max(1000.0).min(105000.0); // Clamp to reasonable range
+    let new_pressure = (pressure + dp).clamp(1000.0, 105000.0); // Clamp to reasonable range
 
     Ok((new_lon, new_lat, new_pressure))
 }

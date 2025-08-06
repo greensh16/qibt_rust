@@ -7,12 +7,11 @@ pub mod ascii_writer;
 pub mod zarr_writer;
 
 pub use reader::*;
-pub use writer::*;
+pub use writer::{NetCDFWriter, BufferedRecord, NetCDFTrajectoryWriter, write_trajectory_ascii};
 pub use output_trait::*;
 pub mod generic_accessor;
 
 use ndarray::Array4;
-use crate::math::interpolate::{FieldDataAccess, ArrayFieldData};
 
 /// Common data structures for meteorological data
 #[derive(Debug, Clone)]

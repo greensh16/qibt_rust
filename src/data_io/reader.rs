@@ -1,4 +1,3 @@
-use super::common::*;
 // Removed utils import
 use super::{MeteoData, MeteoField};
 use chrono::{DateTime, Utc, Duration};
@@ -7,7 +6,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use crate::config::Config;
-use crate::io::{DataReader, DataReaderError, VariableInfo, DimensionInfo, FileMetadata, Attributes, AttributeValue};
+use crate::io::{DataReader, DataReaderError, VariableInfo, DimensionInfo, Attributes, AttributeValue, CoordinateArrays};
+
+/// Type alias for coordinate result to reduce complexity
+type CoordinateResult = (Array2<f32>, Array2<f32>, Array1<f32>);
 
 /// Common interface for data loaders to guarantee identical external behavior
 pub trait DataLoader {
@@ -339,7 +341,7 @@ impl AdvancedNetCDFReader {
         &self,
         datetime: &DateTime<Utc>,
         domain: Option<u32>,
-    ) -> Result<(Array2<f32>, Array2<f32>, Array1<f32>), ReaderError> {
+    ) -> Result<CoordinateResult, ReaderError> {
         // Open the NetCDF file
         let file = self.open_netcdf_file(datetime, domain, "wrfout")?;
 
@@ -731,7 +733,7 @@ impl DataLoader for MultiFileDataLoader {
 }
 
 /// Complete dataset for simulation matching Fortran QIBT data structures
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SimulationDataset {
     /// Meteorological data indexed by time
     pub meteo_data: HashMap<DateTime<Utc>, HashMap<String, Array4<f32>>>,
@@ -747,14 +749,9 @@ pub struct SimulationDataset {
 
 impl SimulationDataset {
     pub fn new() -> Self {
-        Self {
-            meteo_data: HashMap::new(),
-            mixtot_data: HashMap::new(),
-            precip_data: HashMap::new(),
-            surface_pressure: HashMap::new(),
-            coordinates: None,
-        }
+        Self::default()
     }
+
     
     /// Get the available time steps
     pub fn get_time_steps(&self) -> Vec<DateTime<Utc>> {
@@ -843,7 +840,7 @@ impl DataReader for NetCDFReader {
     fn open(&mut self, path: &Path) -> Result<(), DataReaderError> {
         self.file_path = path.to_string_lossy().to_string();
         // Validate the file exists
-        self.validate_file().map_err(|e| DataReaderError::FileNotFound(e))?;
+        self.validate_file().map_err(DataReaderError::FileNotFound)?;
         Ok(())
     }
     
@@ -970,7 +967,7 @@ impl DataReader for NetCDFReader {
         Ok(result)
     }
     
-    fn read_coordinates(&self) -> Result<(Array2<f32>, Array2<f32>, Array1<f32>), DataReaderError> {
+    fn read_coordinates(&self) -> Result<CoordinateArrays, DataReaderError> {
         // Create placeholder coordinate arrays
         let lat_grid = Array2::<f32>::zeros((50, 50));
         let lon_grid = Array2::<f32>::zeros((50, 50));
