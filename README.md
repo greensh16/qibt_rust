@@ -4,14 +4,6 @@ Quasi-Isentropic Back-Trajectory Analysis Tool in Rust.
 
 **Version 1.1.0** - Now with unified data format support, cloud integration, and advanced streaming capabilities!
 
-## ✨ What's New in v1.1.0
-
-- **🌐 Multi-format Support**: Unified interface for NetCDF and Zarr datasets
-- **☁️ Cloud Integration**: Native support for AWS S3, Google Cloud Storage, and Azure Blob Storage
-- **🚀 Streaming Performance**: Intelligent chunked access and caching for large datasets
-- **🔧 Enhanced CLI**: Automatic format detection and cloud authentication options
-- **📦 Modular Features**: Optional Zarr support with feature flags
-
 ## Build Instructions
 
 Before building, ensure you have Rust and Cargo installed. You can install Rust using `rustup`:
@@ -308,25 +300,6 @@ Make sure the input data file exists at the specified path.
 
 ## 🔧 Advanced Usage
 
-### Environment Variables Reference
-
-```bash
-# AWS Configuration
-AWS_ACCESS_KEY_ID / QIBT_AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY / QIBT_AWS_SECRET_ACCESS_KEY
-AWS_SESSION_TOKEN / QIBT_AWS_SESSION_TOKEN  
-AWS_REGION / QIBT_AWS_REGION
-AWS_ENDPOINT_URL / QIBT_ENDPOINT_URL
-
-# Google Cloud Configuration
-GOOGLE_APPLICATION_CREDENTIALS / QIBT_GCP_SERVICE_ACCOUNT_KEY
-GOOGLE_CLOUD_PROJECT / QIBT_GCP_PROJECT_ID
-
-# Azure Configuration
-AZURE_STORAGE_ACCOUNT / QIBT_AZURE_STORAGE_ACCOUNT
-AZURE_STORAGE_KEY / QIBT_AZURE_STORAGE_KEY
-```
-
 ### Feature Combinations
 
 ```bash
@@ -352,29 +325,12 @@ cargo build --features zarr,optimized
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128GB
 
-export OMP_NUM_THREADS=32
-
 ./target/release/qibt_rust run \
     --input /shared/climate_data/era5.zarr \
     --output $SCRATCH/results/trajectory_$(date +%Y%m%d).nc \
     --threads 32 \
     --parcels 10000 \
     --chunk-size 134217728   # 128MB for high-memory system
-```
-
-**Container deployment:**
-```dockerfile
-FROM rust:1.75
-WORKDIR /app
-COPY . .
-RUN cargo build --release --features zarr,zarr_s3
-CMD ["./target/release/qibt_rust"]
-```
-
-```bash
-# Run in container with cloud credentials
-docker run -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
-    qibt_rust run --input s3://data/weather.zarr --output /results/traj.nc
 ```
 
 ## ⚠️ Troubleshooting
@@ -398,19 +354,6 @@ ls -la data.zarr/  # Should contain .zgroup or .zarray files
 
 # Solution 3: Verify file accessibility
 file data.nc  # Should show NetCDF format
-```
-
-**Cloud authentication errors**
-```bash
-# Check credentials
-echo $AWS_ACCESS_KEY_ID
-aws s3 ls s3://your-bucket/  # Test AWS CLI access
-
-# Use CLI override
-./target/release/qibt_rust run \
-    --input s3://bucket/data.zarr \
-    --aws-access-key-id override_key \
-    --aws-region us-east-1
 ```
 
 **Performance issues with cloud data**
@@ -490,20 +433,10 @@ cargo run --example unified_trajectory_demo --features zarr
 | Azure Blob | `abfs://container/account.dfs.core.windows.net/data.zarr` | Azure credentials | `zarr_azure` |
 | MinIO/Custom | `s3://bucket/data.zarr` + endpoint | S3-compatible credentials | `zarr_s3` |
 
-## 🔗 Migration and Compatibility
-
-**Upgrading from v1.0.0**: See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for detailed migration instructions.
-
-**Version compatibility**:
-- v1.1.0 is fully backward compatible with v1.0.0
-- All existing NetCDF workflows continue to work unchanged
-- New features are opt-in via feature flags
-
 ## 🚀 What's Next
 
 Upcoming features in future releases:
-- HDF5 format support
-- GRIB format support
 - Enhanced parallel streaming
 - Built-in data validation tools
 - Interactive trajectory visualization
+- GPU support

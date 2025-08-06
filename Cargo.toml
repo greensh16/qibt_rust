@@ -23,7 +23,7 @@ include = [
 ]
 
 [dependencies]
-netcdf = "0.11"
+netcdf = { version = "0.11.0", features = ["static"] }
 ndarray = { version = "0.15", features = ["rayon", "blas"] }
 rayon = "1.7"
 chrono = "0.4"
