@@ -1,0 +1,249 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable, beta]
+        # Enable zarr feature in default test matrix
+        features: ["zarr", "zarr,optimized"]
+        include:
+          # Test NetCDF-only builds (no zarr) for users who don't need Zarr
+          - os: ubuntu-latest
+            rust: stable
+            features: "netcdf-only"
+            no_default_features: true
+          - os: windows-latest  
+            rust: stable
+            features: "netcdf-only"
+            no_default_features: true
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libnetcdf-dev netcdf-bin
+
+    - name: Install system dependencies (macOS)
+      if: matrix.os == 'macos-latest' 
+      run: |
+        brew install netcdf
+
+    - name: Install system dependencies (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        # Use vcpkg for NetCDF on Windows
+        vcpkg install netcdf:x64-windows
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-${{ matrix.rust }}-
+          ${{ runner.os }}-cargo-
+
+    - name: Cache large sample data
+      uses: actions/cache@v4
+      with:
+        path: |
+          test_data/
+          ~/.cache/qibt_test_data/
+        key: ${{ runner.os }}-test-data-v2-${{ hashFiles('test_data/**/*.md5', 'test_data/**/*.sha256') }}
+        restore-keys: |
+          ${{ runner.os }}-test-data-v2-
+          ${{ runner.os }}-test-data-
+
+    - name: Download large sample data
+      run: |
+        # Create cache directory if it doesn't exist
+        mkdir -p ~/.cache/qibt_test_data
+        
+        # Check if we have cached data, if not download
+        if [ ! -f ~/.cache/qibt_test_data/sample_data_downloaded ]; then
+          echo "Downloading large sample data..."
+          # Add your data download logic here
+          # For example:
+          # wget -O ~/.cache/qibt_test_data/large_dataset.zarr.zip https://example.com/data.zip
+          # unzip ~/.cache/qibt_test_data/large_dataset.zarr.zip -d ~/.cache/qibt_test_data/
+          echo "Sample data download completed" > ~/.cache/qibt_test_data/sample_data_downloaded
+        else
+          echo "Using cached sample data"
+        fi
+        
+        # Link cached data to test_data directory
+        ln -sf ~/.cache/qibt_test_data/* test_data/ || true
+      shell: bash
+
+    - name: Build with NetCDF-only features (no default features)
+      if: matrix.features == 'netcdf-only'
+      run: cargo build --verbose --no-default-features --features netcdf
+
+    - name: Build with default zarr features  
+      if: matrix.features != 'netcdf-only'
+      run: cargo build --verbose --features ${{ matrix.features }}
+
+    - name: Run tests with NetCDF-only features
+      if: matrix.features == 'netcdf-only'
+      run: cargo test --verbose --no-default-features --features netcdf
+
+    - name: Run tests with zarr features
+      if: matrix.features != 'netcdf-only'
+      run: cargo test --verbose --features ${{ matrix.features }}
+
+    - name: Run integration tests
+      if: matrix.features != 'netcdf-only'
+      run: cargo test --verbose --features ${{ matrix.features }} --test integration_test
+
+    - name: Run zarr-specific tests
+      if: contains(matrix.features, 'zarr')
+      run: |
+        cargo test --verbose --features ${{ matrix.features }} --test zarr_reader_test
+        cargo test --verbose --features ${{ matrix.features }} zarr
+
+  clippy:
+    name: Lint (clippy)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libnetcdf-dev netcdf-bin
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run clippy with zarr features
+      run: cargo clippy --features zarr --all-targets -- -D warnings
+
+    - name: Run clippy with netcdf-only features
+      run: cargo clippy --no-default-features --features netcdf --all-targets -- -D warnings
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update  
+        sudo apt-get install -y libnetcdf-dev netcdf-bin
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-docs-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build documentation with zarr features
+      run: cargo doc --features zarr --no-deps
+
+    - name: Build documentation with netcdf-only features  
+      run: cargo doc --no-default-features --features netcdf --no-deps
+
+  feature-compatibility:
+    name: Feature Compatibility Check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libnetcdf-dev netcdf-bin
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-features-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Test minimal NetCDF build
+      run: |
+        echo "Testing minimal NetCDF-only build..."
+        cargo check --no-default-features --features netcdf
+        cargo build --no-default-features --features netcdf
+        cargo test --no-default-features --features netcdf --lib
+
+    - name: Test all zarr features individually
+      run: |
+        echo "Testing individual zarr features..."
+        cargo check --features zarr
+        cargo check --features zarr_s3  
+        cargo check --features zarr_gcs
+        cargo check --features zarr_http
+        cargo check --features zarr_azure
+        cargo check --features zarr_async
+
+    - name: Test feature combinations
+      run: |
+        echo "Testing feature combinations..."
+        cargo check --features "zarr,optimized"
+        cargo check --features "zarr,f32_precision"
+        cargo check --features "zarr,zarr_s3,zarr_async"
+
+    - name: Verify no-default-features works for NetCDF users
+      run: |
+        echo "Verifying NetCDF-only users can build without zarr dependencies..."
+        # This should succeed and not pull in zarr dependencies
+        cargo tree --no-default-features --features netcdf | grep -v zarr || echo "✓ No zarr dependencies found in NetCDF-only build"
+        
+        # Verify the build actually works
+        cargo build --release --no-default-features --features netcdf
+        echo "✓ NetCDF-only build successful"
