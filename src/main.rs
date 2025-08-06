@@ -2,7 +2,7 @@ use clap::{Arg, ArgMatches, Command, value_parser};
 use qibt_rust::{
     benchmark::{BenchmarkSuite, run_flamegraph_profiling},
     config::Config,
-    data_io::{NetCDFReader, MultiFileDataLoader},
+    data_io::{NetCDFReader, MultiFileDataLoader, output_trait::OutputFormat},
     io::{Dataset, DataReader, is_netcdf_format, is_zarr_format},
     math::physics::{calc_quality_factor, calc_parcel_moisture_contribution},
     time_utils,
@@ -236,6 +236,12 @@ fn run_sample_test(matches: &ArgMatches) -> Result<(), String> {
 }
 
 fn run_trajectory(matches: &ArgMatches) -> Result<(), String> {
+    let output_format: OutputFormat = matches.get_one::<String>("output-format")
+        .expect("output-format argument is required")
+        .parse()
+        .map_err(|_| "Invalid value provided for output format")?;
+
+    println!("Selected output format: {}", output_format);
     let input = matches.get_one::<String>("input").unwrap();
     let _output = matches.get_one::<String>("output").unwrap();
     let format = matches.get_one::<String>("format").unwrap();
@@ -331,36 +337,124 @@ impl SingleFileDataLoader {
             .or_else(|| file.variable("Times"))
             .ok_or("Missing time variable (tried XTIME, time, Time, Times)")?;
         
-        let time_data: Vec<f64> = time_var.get_values(..).map_err(|e| format!("Failed to read time data: {}", e))?;
-        
-        // Convert time data to DateTime<Utc>
-        let time: Result<Vec<DateTime<Utc>>, String> = if let Some(units) = time_var.attribute("units") {
-            let units_str = format!("{:?}", units);
-            if units_str.contains("minutes since") {
-                // WRF-style: minutes since simulation start
-                let base_time = Utc.with_ymd_and_hms(2025, 8, 1, 0, 0, 0).unwrap();
-                Ok(time_data.into_iter().map(|minutes| {
-                    base_time + chrono::Duration::minutes(minutes as i64)
-                }).collect())
-            } else if units_str.contains("hours since") {
-                // Standard CF: hours since epoch
-                Ok(time_data.into_iter().map(|hours| {
-                    let timestamp = (hours * 3600.0) as i64;
-                    Utc.timestamp_opt(timestamp, 0).unwrap()
-                }).collect())
+        // Handle different time variable types
+        let time: Result<Vec<DateTime<Utc>>, String> = if time_var.name() == "Times" {
+            // WRF-style Times variable: character array with date strings
+            // Try reading as character array first
+            let char_data: Result<Vec<i8>, _> = time_var.get_values(..);
+            
+            match char_data {
+                Ok(chars) => {
+                    // Get dimensions to understand the array layout
+                    let dimensions: Vec<usize> = time_var.dimensions().iter().map(|d| d.len()).collect();
+                    if dimensions.len() != 2 {
+                        return Err("Expected 2D Times variable (Time, DateStrLen)".to_string());
+                    }
+                    
+                    let (num_times, date_str_len) = (dimensions[0], dimensions[1]);
+                    
+                    // Parse each time string
+                    let mut parsed_times = Vec::new();
+                    for i in 0..num_times {
+                        let start_idx = i * date_str_len;
+                        let end_idx = start_idx + date_str_len;
+                        
+                        if end_idx <= chars.len() {
+                            let time_chars = &chars[start_idx..end_idx];
+                            
+                            // Convert i8 chars to bytes, then to string
+                            let time_bytes: Vec<u8> = time_chars.iter().map(|&c| c as u8).collect();
+                            let time_str = std::str::from_utf8(&time_bytes)
+                                .map_err(|e| format!("Invalid UTF-8 in time string: {}", e))?
+                                .trim_end_matches('\0')
+                                .trim();
+                            
+                            println!("Parsed time string: '{}'", time_str);
+                            
+                            // Parse WRF format: YYYY-MM-DD_HH:MM:SS
+                            match chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d_%H:%M:%S") {
+                                Ok(dt) => parsed_times.push(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)),
+                                Err(_) => return Err(format!("Failed to parse time string: '{}'", time_str)),
+                            }
+                        } else {
+                            return Err(format!("Invalid time array dimensions"));
+                        }
+                    }
+                    
+                    Ok(parsed_times)
+                }
+                Err(_) => {
+                    // Fallback: try reading as u8 bytes
+                    let raw_data: Vec<u8> = time_var.get_values(..)
+                        .map_err(|e| format!("Failed to read Times data as bytes: {}", e))?;
+                    
+                    // Get dimensions
+                    let dimensions: Vec<usize> = time_var.dimensions().iter().map(|d| d.len()).collect();
+                    if dimensions.len() != 2 {
+                        return Err("Expected 2D Times variable (Time, DateStrLen)".to_string());
+                    }
+                    
+                    let (num_times, date_str_len) = (dimensions[0], dimensions[1]);
+                    
+                    // Parse each time string
+                    let mut parsed_times = Vec::new();
+                    for i in 0..num_times {
+                        let start_idx = i * date_str_len;
+                        let end_idx = start_idx + date_str_len;
+                        
+                        if end_idx <= raw_data.len() {
+                            let time_bytes = &raw_data[start_idx..end_idx];
+                            let time_str = std::str::from_utf8(time_bytes)
+                                .map_err(|e| format!("Invalid UTF-8 in time string: {}", e))?
+                                .trim_end_matches('\0')
+                                .trim();
+                            
+                            // Parse WRF format: YYYY-MM-DD_HH:MM:SS
+                            match chrono::NaiveDateTime::parse_from_str(time_str, "%Y-%m-%d_%H:%M:%S") {
+                                Ok(dt) => parsed_times.push(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc)),
+                                Err(_) => return Err(format!("Failed to parse time string: '{}'", time_str)),
+                            }
+                        } else {
+                            return Err(format!("Invalid time array dimensions"));
+                        }
+                    }
+                    
+                    Ok(parsed_times)
+                }
+            }
+        } else {
+            // Numeric time variable
+            let time_data: Vec<f64> = time_var.get_values(..).map_err(|e| format!("Failed to read time data: {}", e))?;
+            
+            // Convert time data to DateTime<Utc>
+            if let Some(units) = time_var.attribute("units") {
+                let units_str = format!("{:?}", units);
+                if units_str.contains("minutes since") {
+                    // WRF-style: minutes since simulation start
+                    let base_time = Utc.with_ymd_and_hms(2025, 8, 1, 0, 0, 0).unwrap();
+                    Ok(time_data.into_iter().map(|minutes| {
+                        base_time + chrono::Duration::minutes(minutes as i64)
+                    }).collect())
+                } else if units_str.contains("hours since") {
+                    // Standard CF: hours since epoch
+                    Ok(time_data.into_iter().map(|hours| {
+                        let timestamp = (hours * 3600.0) as i64;
+                        Utc.timestamp_opt(timestamp, 0).unwrap()
+                    }).collect())
+                } else {
+                    // Assume Julian days
+                    Ok(time_data.into_iter().map(|julian| {
+                        let timestamp = ((julian - 2440587.5) * 86400.0) as i64;
+                        Utc.timestamp_opt(timestamp, 0).unwrap()
+                    }).collect())
+                }
             } else {
-                // Assume Julian days
+                // No units, assume Julian days
                 Ok(time_data.into_iter().map(|julian| {
                     let timestamp = ((julian - 2440587.5) * 86400.0) as i64;
                     Utc.timestamp_opt(timestamp, 0).unwrap()
                 }).collect())
             }
-        } else {
-            // No units, assume Julian days
-            Ok(time_data.into_iter().map(|julian| {
-                let timestamp = ((julian - 2440587.5) * 86400.0) as i64;
-                Utc.timestamp_opt(timestamp, 0).unwrap()
-            }).collect())
         };
         
         let time = time?;
@@ -571,6 +665,13 @@ fn build_cli() -> Command {
         .author("QIBT Development Team")
         .about("Quasi-Isentropic Back-Trajectory Analysis Tool")
         .subcommand_required(true)
+        .arg(
+            Arg::new("output-format")
+                .long("output-format")
+                .value_name("FORMAT")
+                .help("Output format: netcdf, zarr, or ascii")
+                .default_value("netcdf")
+        )
         .subcommand(
             Command::new("validate")
                 .about("Validate Rust implementation against Fortran reference")

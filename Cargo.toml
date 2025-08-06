@@ -2,7 +2,7 @@
 name = "qibt_rust"
 version = "1.1.0"
 edition = "2021"
-authors = ["QIBT Rust Contributors"]
+authors = ["Sam Green"]
 description = "Quasi-Isentropic Back-Trajectory Analysis Tool in Rust with unified data format support and cloud integration"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/user/qibt_rust"
@@ -69,7 +69,10 @@ zarr = [
     "dep:bytes",
     "dep:futures",
     "object_store/http",
-    "object_store/fs"
+    "object_store/fs",
+    "object_store/aws",
+    "object_store/gcp",
+    "object_store/azure"
 ]
 
 # Individual cloud backend features (require zarr feature)

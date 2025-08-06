@@ -1,5 +1,5 @@
 use super::common::*;
-use super::utils::*;
+// Removed utils import
 use super::{MeteoData, MeteoField};
 use chrono::{DateTime, Utc, Duration};
 use ndarray::{Array1, Array2, Array4};
@@ -330,7 +330,8 @@ impl AdvancedNetCDFReader {
         datetime: &DateTime<Utc>,
         domain: Option<u32>,
     ) -> Result<HashMap<String, Array4<f32>>, ReaderError> {
-        self.read_multiple_variables(datetime, STANDARD_METEO_VARS, domain)
+        let standard_vars = ["U", "V", "W", "T", "QVAPOR", "P", "PB", "PH", "PHB"];
+        self.read_multiple_variables(datetime, &standard_vars, domain)
     }
 
     /// Read coordinate variables (XLAT, XLONG, etc.)
@@ -772,6 +773,69 @@ impl SimulationDataset {
         }
         None
     }
+}
+
+// Helper functions for caching and NetCDF operations
+fn generate_cache_key(datetime: &DateTime<Utc>, suffix: Option<&str>) -> String {
+    match suffix {
+        Some(s) => format!("{}-{}", datetime.format("%Y%m%d%H%M%S"), s),
+        None => datetime.format("%Y%m%d%H%M%S").to_string(),
+    }
+}
+
+fn get_from_cache(
+    cache: &HashMap<String, HashMap<String, Array4<f32>>>,
+    key: &str,
+) -> Option<HashMap<String, Array4<f32>>> {
+    cache.get(key).cloned()
+}
+
+fn insert_into_cache(
+    cache: &mut HashMap<String, HashMap<String, Array4<f32>>>,
+    key: String,
+    data: HashMap<String, Array4<f32>>,
+) {
+    cache.insert(key, data);
+}
+
+fn apply_boundary_trimming(array: Array4<f32>, trim: usize) -> Array4<f32> {
+    if trim == 0 {
+        return array;
+    }
+    
+    let shape = array.shape();
+    if shape[0] <= 2 * trim || shape[1] <= 2 * trim {
+        // If trimming would remove everything, return original
+        return array;
+    }
+    
+    // Trim boundaries: [j, i, k, t] -> [j-trim, i-trim, k, t]
+    let trimmed = array.slice(ndarray::s![
+        trim..shape[0]-trim,
+        trim..shape[1]-trim,
+        ..,
+        ..
+    ]).to_owned();
+    
+    trimmed
+}
+
+fn open_netcdf_file(
+    base_path: &str,
+    datetime: &DateTime<Utc>,
+    domain: Option<u32>,
+    file_type: &str,
+) -> Result<netcdf::File, ReaderError> {
+    let filename = get_filename(base_path, datetime, domain, file_type);
+    
+    if !filename.exists() {
+        return Err(ReaderError::FileNotFound(format!(
+            "NetCDF file not found: {}",
+            filename.display()
+        )));
+    }
+    
+    netcdf::open(&filename).map_err(ReaderError::Netcdf)
 }
 
 /// Implementation of DataReader trait for NetCDFReader

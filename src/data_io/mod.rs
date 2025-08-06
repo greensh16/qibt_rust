@@ -1,10 +1,14 @@
 pub mod common;
 pub mod reader;
-pub mod utils;
 pub mod writer;
+pub mod output_trait;
+pub mod ascii_writer;
+#[cfg(feature = "zarr")]
+pub mod zarr_writer;
 
 pub use reader::*;
 pub use writer::*;
+pub use output_trait::*;
 pub mod generic_accessor;
 
 use ndarray::Array4;

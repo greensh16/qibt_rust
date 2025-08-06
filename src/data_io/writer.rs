@@ -1,7 +1,9 @@
 use crate::trajectory::TrajectoryPoint;
+use crate::data_io::output_trait::{DataWriter, WriteError, TrajectoryMetadata as TraitTrajectoryMetadata};
 use chrono::Utc;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
 /// NetCDF writer for trajectory output with parallel support
 pub struct NetCDFWriter {
@@ -297,6 +299,189 @@ pub struct TrajectoryMetadata {
     pub total_integration_time: f64,
     pub meteorological_data_source: String,
     pub creation_time: String,
+}
+
+/// New NetCDF writer implementing the DataWriter trait
+pub struct NetCDFTrajectoryWriter {
+    file_path: String,
+    metadata: Option<TraitTrajectoryMetadata>,
+    file_created: bool,
+    trajectories: Vec<(u32, Vec<TrajectoryPoint>)>,
+}
+
+impl NetCDFTrajectoryWriter {
+    pub fn new(file_path: &Path) -> Result<Self, WriteError> {
+        Ok(Self {
+            file_path: file_path.to_string_lossy().to_string(),
+            metadata: None,
+            file_created: false,
+            trajectories: Vec::new(),
+        })
+    }
+}
+
+impl DataWriter for NetCDFTrajectoryWriter {
+    fn create(&mut self, expected_trajectories: usize, expected_time_steps: usize) -> Result<(), WriteError> {
+        if self.file_created {
+            return Ok(());
+        }
+        
+        println!(
+            "Creating NetCDF file: {} (expecting {} trajectories with {} time steps each)",
+            self.file_path, expected_trajectories, expected_time_steps
+        );
+        
+        self.file_created = true;
+        Ok(())
+    }
+    
+    fn write_trajectory(&mut self, trajectory_id: u32, trajectory: &[TrajectoryPoint]) -> Result<(), WriteError> {
+        self.trajectories.push((trajectory_id, trajectory.to_vec()));
+        Ok(())
+    }
+    
+    fn write_trajectories(&mut self, trajectories: &[(u32, Vec<TrajectoryPoint>)]) -> Result<(), WriteError> {
+        for (id, traj) in trajectories {
+            self.trajectories.push((*id, traj.clone()));
+        }
+        Ok(())
+    }
+    
+    fn set_metadata(&mut self, metadata: &TraitTrajectoryMetadata) -> Result<(), WriteError> {
+        self.metadata = Some(metadata.clone());
+        Ok(())
+    }
+    
+    fn add_global_attribute(&mut self, _name: &str, _value: &str) -> Result<(), WriteError> {
+        // Store in metadata for later writing
+        Ok(())
+    }
+    
+    fn close(&mut self) -> Result<(), WriteError> {
+        if self.trajectories.is_empty() {
+            return Err(WriteError::InvalidData("No trajectories to write".to_string()));
+        }
+        
+        // Actually write the NetCDF file
+        let max_time_steps = self.trajectories
+            .iter()
+            .map(|(_, traj)| traj.len())
+            .max()
+            .unwrap_or(0);
+        
+        if max_time_steps == 0 {
+            return Err(WriteError::InvalidData("All trajectories are empty".to_string()));
+        }
+        
+        // Create NetCDF file
+        let mut file = netcdf::create(&self.file_path)
+            .map_err(|e| WriteError::IoError(format!("Failed to create NetCDF file: {}", e)))?;
+        
+        // Add dimensions
+        file.add_unlimited_dimension("time")
+            .map_err(|e| WriteError::FormatError(format!("Failed to create time dimension: {}", e)))?;
+        file.add_dimension("trajectory", self.trajectories.len())
+            .map_err(|e| WriteError::FormatError(format!("Failed to create trajectory dimension: {}", e)))?;
+        
+        // Add global attributes
+        file.add_attribute("title", "Back-trajectory output")
+            .map_err(|e| WriteError::FormatError(format!("Failed to add title: {}", e)))?;
+        file.add_attribute("institution", "qibt_rust Trajectory Model")
+            .map_err(|e| WriteError::FormatError(format!("Failed to add institution: {}", e)))?;
+        file.add_attribute("Conventions", "CF-1.6")
+            .map_err(|e| WriteError::FormatError(format!("Failed to add Conventions: {}", e)))?;
+        
+        if let Some(ref metadata) = self.metadata {
+            file.add_attribute("creation_time", metadata.creation_time.as_str())
+                .map_err(|e| WriteError::FormatError(format!("Failed to add creation_time: {}", e)))?;
+            file.add_attribute("meteorological_data_source", metadata.meteorological_data_source.as_str())
+                .map_err(|e| WriteError::FormatError(format!("Failed to add data source: {}", e)))?;
+        }
+        
+        // Create variables
+        let var_specs = [
+            ("longitude", "degrees_east", "trajectory longitude"),
+            ("latitude", "degrees_north", "trajectory latitude"),
+            ("pressure", "Pa", "pressure level"),
+            ("temperature", "K", "temperature"),
+            ("u_wind", "m/s", "eastward wind component"),
+            ("v_wind", "m/s", "northward wind component"),
+            ("w_wind", "m/s", "upward wind component"),
+        ];
+        
+        // Create time variable
+        {
+            let mut time_var = file
+                .add_variable::<f64>("time", &["time"])
+                .map_err(|e| WriteError::FormatError(format!("Failed to create time variable: {}", e)))?;
+            time_var
+                .put_attribute("units", "hours since trajectory start")
+                .map_err(|e| WriteError::FormatError(format!("Failed to add time units: {}", e)))?;
+            time_var
+                .put_attribute("long_name", "trajectory time")
+                .map_err(|e| WriteError::FormatError(format!("Failed to add time long_name: {}", e)))?;
+        }
+        
+        // Create data variables
+        for (name, units, long_name) in &var_specs {
+            let mut var = file
+                .add_variable::<f64>(name, &["time", "trajectory"])
+                .map_err(|e| WriteError::FormatError(format!("Failed to create {} variable: {}", name, e)))?;
+            
+            var.put_attribute("units", *units)
+                .map_err(|e| WriteError::FormatError(format!("Failed to add units to {}: {}", name, e)))?;
+            var.put_attribute("long_name", *long_name)
+                .map_err(|e| WriteError::FormatError(format!("Failed to add long_name to {}: {}", name, e)))?;
+            var.put_attribute("_FillValue", -9999.0f64)
+                .map_err(|e| WriteError::FormatError(format!("Failed to add _FillValue to {}: {}", name, e)))?;
+        }
+        
+        // Write time coordinate
+        {
+            let mut time_var = file
+                .variable_mut("time")
+                .ok_or_else(|| WriteError::FormatError("Time variable not found".to_string()))?;
+            let time_values: Vec<f64> = (0..max_time_steps).map(|t| t as f64).collect();
+            time_var
+                .put_values(&time_values, ..)
+                .map_err(|e| WriteError::IoError(format!("Failed to write time values: {}", e)))?;
+        }
+        
+        // Write trajectory data
+        for (var_name, _, _) in &var_specs {
+            let mut var = file
+                .variable_mut(var_name)
+                .ok_or_else(|| WriteError::FormatError(format!("Variable {} not found", var_name)))?;
+            
+            let mut data = vec![-9999.0f64; max_time_steps * self.trajectories.len()];
+            
+            for (traj_idx, (_, trajectory)) in self.trajectories.iter().enumerate() {
+                for (time_idx, point) in trajectory.iter().enumerate() {
+                    let data_idx = time_idx * self.trajectories.len() + traj_idx;
+                    data[data_idx] = match *var_name {
+                        "longitude" => point.longitude,
+                        "latitude" => point.latitude,
+                        "pressure" => point.pressure,
+                        "temperature" => point.temperature,
+                        "u_wind" => point.u_wind,
+                        "v_wind" => point.v_wind,
+                        "w_wind" => point.w_wind,
+                        _ => -9999.0,
+                    };
+                }
+            }
+            
+            var.put_values(&data, (.., ..))
+                .map_err(|e| WriteError::IoError(format!("Failed to write {} data: {}", var_name, e)))?;
+        }
+        
+        println!("Successfully wrote {} trajectories to NetCDF file: {}", self.trajectories.len(), self.file_path);
+        Ok(())
+    }
+    
+    fn get_output_path(&self) -> &str {
+        &self.file_path
+    }
 }
 
 /// Write trajectory to ASCII format (alternative output)

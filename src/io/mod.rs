@@ -7,11 +7,11 @@ use thiserror::Error;
 use chrono::{DateTime, Utc};
 
 #[cfg(feature = "zarr")]
-pub mod zarr_reader;
-#[cfg(feature = "zarr")]
-pub mod cloud_auth;
-#[cfg(feature = "zarr")]
-pub mod streaming_reader;
+mod zarr_reader;
+// #[cfg(feature = "zarr")]
+// mod cloud_auth;
+// #[cfg(feature = "zarr")]
+// mod streaming_reader;
 
 /// Generic error type for data readers
 #[derive(Error, Debug)]
