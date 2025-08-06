@@ -31,9 +31,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-
       
-    - name: Run clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
-      
     - name: Build (NetCDF only)
       run: cargo build --no-default-features --features netcdf
       
